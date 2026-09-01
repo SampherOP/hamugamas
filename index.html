@@ -1203,7 +1203,6 @@
                         <button class="btn btn-outline multiplayer-disabled-btn" type="button" disabled title="Multiplayer is temporarily disabled">🔒 Multiplayer Temporarily Disabled</button>
                     </div>
                 </div>
-
                 <div>
                     <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i> Continue playing</div>
                     <div class="game-grid" id="continuePlayingGrid">
@@ -1766,14 +1765,37 @@
             initRealtimeMultiplayer();
         });
 
+        /* ======================================================================
+           =======================  GAMES DATABASE  ============================
+           ======================================================================
+
+           ⭐ YE WEBSITE KA MAIN GAMES SECTION HAI.
+           ⭐ AAGE SE NAYA GAME ADD KARNA HO TO SIRF IS LIST KE ANDAR EK LINE ADD KARO.
+           ⭐ KISI AUR CODE KO CHHEDNE KI ZAROORAT NAHI.
+
+           FORMAT:
+           { name: "GAME NAME", url: "GAME URL", img: "assets/pictures/IMAGE.jpeg", category: "CATEGORY" },
+
+           Example:
+           { name: "My Game", url: "https://example.com/", img: "assets/pictures/mygame.jpeg", category: "Action" },
+
+           IMPORTANT:
+           - image ko assets/pictures/ folder mein rakho.
+           - image ka naam/code mein EXACT same hona chahiye.
+           - har game line ke end mein comma lagao, except last line.
+           - category examples: Action, Multiplayer, Strategy, Racing, Sports, etc.
+           ====================================================================== */
         const allGames = [
             { name: "Hazmob", url: "https://hazmobfps.io/", img: "assets/pictures/hazmob.jpeg", category: "Action" },
             { name: "Hamu Shooter", url: "https://hamushooter-real.vercel.app/", img: "assets/pictures/hamushooter.jpeg", category: "Action" },
             { name: "Ragdoll Archers", url: "https://www.crazygames.com/embed/ragdoll-archers", img: "assets/pictures/hamuarcher.jpeg", category: "Action" },
             { name: "Hamu Fighter", url: "https://www.crazygames.com/embed/puppet-fighter-2-player", img: "assets/pictures/hamufighter2.jpeg", category: "Multiplayer" },
             { name: "Veck.io", url: "https://veck.io/", img: "assets/pictures/veckio.jpeg", category: "Multiplayer" },
-            { name: "Hamu Minecraft", url: "https://turbowarp.org/817609515/embed", img: "assets/pictures/pmc.jpeg", category: "Strategy" }
+            { name: "Hamu Minecraft", url: "https://turbowarp.org/817609515/embed", img: "assets/pictures/pmc.jpeg", category: "Strategy" },
+            { name: "krunker", url: "https://krunker.io/", img: "assets/pictures/krunker.jpeg", category: "Action" },
+            { name: "Slither", url: "https://slither.io/", img: "assets/pictures/slither.jpeg", category: "Multiplayer" }
         ];
+        /* ===================== END GAMES DATABASE ============================ */
 
         window.addEventListener('DOMContentLoaded', () => {
             checkUserSession();
@@ -4012,13 +4034,7 @@ let voteTimer = null;
 let authBusy = false;
 let registrationInProgress = false;
 
-function db(path){
-  // IMPORTANT: Firebase root reference must not be created via child("") / empty path.
-  // Use the database instance for root, and ref(path) only for non-empty paths.
-  return (path === undefined || path === null || String(path) === '')
-    ? firebase.database()
-    : firebase.database().ref(String(path));
-}
+function db(path){ return firebase.database().ref(path || ''); }
 function fu(){ return firebase.auth().currentUser || firebaseAuthUser || null; }
 function onlineUser(){ const u=fu(); return u && !u.isAnonymous ? u : null; }
 function userName(){ const u=getActiveUserObj?.(); return u?.username || onlineUser()?.email?.split('@')[0] || 'Player'; }
@@ -4050,34 +4066,14 @@ function profileShape(p){
   };
 }
 async function saveCloudProfile(profile, immediate=true){
-  const u=onlineUser();
-  if(!u || !profile || !firebaseReady) return;
-
-  const p=profileShape(profile);
-  const key=usernameKey(p.username);
-  if(!u.uid || !key || !p.username || !p.email){
-    const e=new Error('INVALID_PROFILE_DATA');
-    console.error('Cloud profile rejected:', {uid:u?.uid, username:p.username, email:p.email, key});
-    if(immediate) throw e;
-    return;
-  }
-
-  try {
-    // Write each concrete Firebase path directly. This avoids an empty-root
-    // child/update path and makes registration deterministic.
-    await firebase.database().ref('users/'+u.uid).set(p);
-    await firebase.database().ref('publicUsers/'+u.uid).set({
-      username:p.username,
-      points:p.points,
-      streak:p.streak,
-      playtimeMinutes:p.playtimeMinutes,
-      achievements:p.achievements
-    });
-    await firebase.database().ref('usernames/'+key).set({uid:u.uid,email:p.email});
-  } catch(e){
-    console.error('Cloud profile write failed',e);
-    if(immediate) throw e;
-  }
+  const u=onlineUser(); if(!u || !profile || !firebaseReady) return;
+  const p=profileShape(profile), key=usernameKey(p.username), root=db();
+  const updates={};
+  updates['users/'+u.uid]=p;
+  updates['publicUsers/'+u.uid]={username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements};
+  if(key) updates['usernames/'+key]={uid:u.uid,email:p.email};
+  try { await root.update(updates); }
+  catch(e){ console.error('Cloud profile write failed',e); if(immediate) throw e; }
 }
 async function loadCloudProfileV3(u){
   if(!u || u.isAnonymous || !firebaseReady) return null;
@@ -4357,159 +4353,96 @@ async function sendReactionV3(emoji){
 
 // ---------- AUTH ----------
 async function authV3(){
-  if(authBusy) return;
-  authBusy=true;
-  const errEl=document.getElementById('authErrorMsg');
-  const btn=document.getElementById('modalSubmitBtn');
-  const old=btn?.innerText;
-  if(errEl) errEl.style.display='none';
+  if(authBusy)return; authBusy=true;
+  const errEl=document.getElementById('authErrorMsg'),btn=document.getElementById('modalSubmitBtn');
+  if(errEl)errEl.style.display='none'; const old=btn?.innerText;
   if(btn){btn.disabled=true;btn.innerText=isLoginMode?'Logging in…':'Creating…';}
-
-  let createdUser=null;
-  let claimedUsernameKey=null;
-  let registrationStarted=false;
-
   try{
-    if(!firebaseReady) throw new Error('Firebase is still connecting. Please wait a moment and try again.');
-
-    const identifier=(document.getElementById('emailInput')?.value||'').trim();
-    const password=document.getElementById('passwordInput')?.value||'';
-    if(!identifier || !password) throw new Error('Please fill in all fields.');
+    if(!firebaseReady)throw new Error('Firebase is still connecting. Please wait a moment and try again.');
+    const identifier=document.getElementById('emailInput')?.value.trim()||'',password=document.getElementById('passwordInput')?.value||'';
+    if(!identifier||!password)throw new Error('Please fill in all fields.');
 
     if(isLoginMode){
       let email=identifier.toLowerCase();
       if(!identifier.includes('@')){
-        const key=usernameKey(identifier);
-        if(!key) throw new Error('USERNAME_NOT_FOUND');
-        const snap=await firebase.database().ref('usernames/'+key).once('value');
-        const data=snap.val();
-        if(!snap.exists() || !data?.email) throw new Error('USERNAME_NOT_FOUND');
-        email=String(data.email).trim().toLowerCase();
+        // Username -> email lookup is intentionally public in the RTDB rules because
+        // the visitor is not authenticated yet. Only the username mapping is exposed.
+        const snap=await db('usernames/'+usernameKey(identifier)).once('value');
+        if(!snap.exists()||!snap.val()?.email)throw new Error('USERNAME_NOT_FOUND');
+        email=String(snap.val().email).toLowerCase();
       }
-      const cred=await firebase.auth().signInWithEmailAndPassword(email,password);
-      firebaseAuthUser=cred.user;
-      const p=await loadCloudProfileV3(cred.user);
-      if(!p) throw new Error('PROFILE_MISSING');
-      attachVoteListenerV3();
-      closeModal?.(); checkUserSession?.(); loadUniversalProgress?.(); renderAllGameGrids?.(); updateStreakUI?.();
+      const cred=await firebase.auth().signInWithEmailAndPassword(email,password);firebaseAuthUser=cred.user;
+      const p=await loadCloudProfileV3(cred.user); if(!p)throw new Error('PROFILE_MISSING');
+      attachVoteListenerV3(); closeModal?.(); checkUserSession?.(); loadUniversalProgress?.(); renderAllGameGrids?.(); updateStreakUI?.();
       show('Login Successful',`Welcome back, ${p.username}! Your cloud profile and progress are loaded.`);
-      return;
+    }else{
+      const username=String(document.getElementById('usernameInput')?.value||'').trim();
+      const email=String(identifier||'').trim().toLowerCase();
+      const USERNAME_RE=/^[a-zA-Z0-9_-]{3,24}$/;
+      const EMAIL_RE=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if(!USERNAME_RE.test(username))throw new Error('BAD_USERNAME');
+      if(!EMAIL_RE.test(email))throw new Error('BAD_EMAIL');
+      if(password.length<6)throw new Error('WEAK_PASSWORD');
+
+      const key=usernameKey(username);
+      if(!key || /[.#$\[\]]/.test(key))throw new Error('BAD_USERNAME');
+
+      const oldLocal=(getAllUsers?.()||[]).find(x=>x.username===username||String(x.email||'').toLowerCase()===email);
+      registrationInProgress=true;
+      let cred=null;
+      try{
+        cred=await firebase.auth().createUserWithEmailAndPassword(email,password);
+        firebaseAuthUser=cred.user;
+        if(!cred.user?.uid)throw new Error('AUTH_UID_MISSING');
+
+        const usernameRef=firebase.database().ref('usernames').child(key);
+        const claim=await usernameRef.transaction(current=>current===null?{uid:cred.user.uid,email}:undefined);
+        if(!claim.committed)throw new Error('USERNAME_TAKEN');
+
+        const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[]});
+        if(!p.username || !p.email)throw new Error('PROFILE_INVALID');
+
+        await firebase.database().ref('users').child(cred.user.uid).set(p);
+        await firebase.database().ref('publicUsers').child(cred.user.uid).set({username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements});
+
+        localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));
+        localStorage.setItem('hamugang_active_user',username);
+        attachVoteListenerV3();closeModal?.();checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();
+        show('Account Created',`Welcome ${username}! Your account is now available on every device.`);
+      }catch(e){
+        if(cred?.user?.uid){
+          try{await firebase.database().ref('usernames').child(key).transaction(v=>v&&v.uid===cred.user.uid?null:v);}catch(_){}
+          try{await firebase.database().ref('users').child(cred.user.uid).remove();}catch(_){}
+          try{await firebase.database().ref('publicUsers').child(cred.user.uid).remove();}catch(_){}
+          try{await cred.user.delete();}catch(_){}
+        }
+        throw e;
+      }finally{registrationInProgress=false;}
     }
-
-    // ---------- REGISTER ----------
-    const username=(document.getElementById('usernameInput')?.value||'').trim();
-    const email=identifier.toLowerCase();
-    const key=usernameKey(username);
-
-    if(!/^[a-zA-Z0-9_-]{3,24}$/.test(username)) throw new Error('BAD_USERNAME');
-    if(!key || key.length<3) throw new Error('BAD_USERNAME');
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('BAD_EMAIL');
-    if(password.length<6) throw new Error('WEAK_PASSWORD');
-
-    // Username availability check. This is intentionally done while unauthenticated;
-    // the Firebase rules for usernames allow the lookup. No account is created yet.
-    const takenSnap=await firebase.database().ref('usernames/'+key).once('value');
-    if(takenSnap.exists()){
-      const existing=takenSnap.val()||{};
-      // A mapping left by an interrupted old registration cannot safely be reclaimed
-      // from client-side code because Firebase Auth cannot enumerate users here.
-      if(String(existing.email||'').toLowerCase()===email){
-        throw new Error('STALE_USERNAME_MAPPING');
-      }
-      throw new Error('USERNAME_TAKEN');
-    }
-
-    registrationStarted=true;
-    window.__HAMU_REGISTRATION_IN_PROGRESS__=true;
-
-    // Create the Auth account first. Firebase automatically makes this user current.
-    const cred=await firebase.auth().createUserWithEmailAndPassword(email,password);
-    createdUser=cred.user;
-    firebaseAuthUser=cred.user;
-
-    // Build the profile from the actual form values, never from auth-state fallbacks.
-    const oldLocal=(getAllUsers?.()||[]).find(x=>
-      x.username===username || String(x.email||'').toLowerCase()===email
-    );
-    const profile=profileShape({
-      username,
-      email,
-      progress:oldLocal?.progress||[],
-      favorites:oldLocal?.favorites||[],
-      points:oldLocal?.points??100,
-      streak:oldLocal?.streak??1,
-      lastClaimDate:oldLocal?.lastClaimDate||null,
-      playtimeMinutes:oldLocal?.playtimeMinutes??10,
-      achievements:oldLocal?.achievements||[]
-    });
-
-    // Claim username and create the profile. If anything fails, clean up what this
-    // registration created so we never leave a phantom username behind.
-    const usernameRef=firebase.database().ref('usernames/'+key);
-    const claim=await usernameRef.transaction(v=>v===null ? {uid:createdUser.uid,email} : undefined);
-    if(!claim.committed) throw new Error('USERNAME_TAKEN');
-    claimedUsernameKey=key;
-
-    await firebase.database().ref('users/'+createdUser.uid).set(profile);
-    await firebase.database().ref('publicUsers/'+createdUser.uid).set({
-      username,
-      points:profile.points,
-      streak:profile.streak,
-      playtimeMinutes:profile.playtimeMinutes,
-      achievements:profile.achievements
-    });
-
-    localStorage.setItem('hamugang_all_users',JSON.stringify(
-      (getAllUsers?.()||[])
-        .filter(x=>x.username!==username && String(x.email||'').toLowerCase()!==email)
-        .concat(profile)
-    ));
-    localStorage.setItem('hamugang_active_user',username);
-
-    attachVoteListenerV3();
-    closeModal?.(); checkUserSession?.(); loadUniversalProgress?.(); renderAllGameGrids?.(); updateStreakUI?.();
-    show('Account Created',`Welcome ${username}! Your account is now available on every device.`);
-
   }catch(e){
     console.error('AUTH V3',e);
-
-    // Roll back only data created by THIS registration attempt.
-    if(registrationStarted && createdUser){
-      try{
-        if(claimedUsernameKey){
-          const ref=firebase.database().ref('usernames/'+claimedUsernameKey);
-          const snap=await ref.once('value');
-          if(snap.exists() && snap.val()?.uid===createdUser.uid) await ref.remove();
-        }
-      }catch(cleanErr){ console.error('Username rollback failed:',cleanErr); }
-      try{ await firebase.database().ref('users/'+createdUser.uid).remove(); }catch(cleanErr){ console.error('Profile rollback failed:',cleanErr); }
-      try{ await firebase.database().ref('publicUsers/'+createdUser.uid).remove(); }catch(cleanErr){ console.error('Public profile rollback failed:',cleanErr); }
-      try{ await createdUser.delete(); }catch(cleanErr){ console.error('Auth rollback failed:',cleanErr); }
-      firebaseAuthUser=null;
-    }
-
     const map={
-      USERNAME_NOT_FOUND:'Username not found. Use the exact username or your registered email.',
-      PROFILE_MISSING:'Login worked, but the cloud profile is missing.',
-      USERNAME_TAKEN:'That username is already registered. Try another username.',
-      STALE_USERNAME_MAPPING:'This username has an old incomplete registration record. Please choose a new username or remove that username record from Firebase Realtime Database.',
+      USERNAME_NOT_FOUND:'Username not found. Use your email or check the username.',
+      PROFILE_MISSING:'Login worked but your cloud profile is missing.',
+      USERNAME_TAKEN:'That username is already registered. Try Login.',
       BAD_USERNAME:'Username must be 3-24 characters using letters, numbers, _ or -.',
-      BAD_EMAIL:'Enter a valid email address, for example name@example.com.',
-      WEAK_PASSWORD:'Password must be at least 6 characters.'
+      BAD_EMAIL:'Enter a valid email address.',
+      WEAK_PASSWORD:'Password must be at least 6 characters.',
+      AUTH_UID_MISSING:'Firebase created the account but did not return a user ID. Please try again.',
+      PROFILE_INVALID:'Your profile data is incomplete. Please check the username and email.'
     };
     if(errEl){
-      errEl.innerText=map[e.message] ||
-        (e.code==='auth/email-already-in-use'?'This email is already registered. Use Login.' :
-         e.code==='auth/invalid-email'?'Firebase rejected this email address. Check it and try again.' :
-         e.code==='auth/invalid-credential'?'Incorrect email/username or password.' :
-         e.message || 'Authentication failed.');
+      errEl.innerText=map[e.message]||
+        (e.code==='auth/email-already-in-use'?'That email is already registered. Click Login.':
+         e.code==='auth/invalid-email'?'Please enter a valid email address.':
+         e.code==='auth/weak-password'?'Password is too weak. Use at least 6 characters.':
+         e.code==='auth/operation-not-allowed'?'Email/Password sign-in is disabled in Firebase Authentication. Enable Email/Password in Firebase Console.':
+         e.code==='auth/invalid-credential'?'Incorrect email/username or password.':
+         e.code==='PERMISSION_DENIED' || /permission_denied/i.test(e.message||'')?'Firebase permission denied. Update the Realtime Database Rules shown below.':
+         e.message||'Authentication failed.');
       errEl.style.display='block';
     }
-  }finally{
-    if(registrationStarted) window.__HAMU_REGISTRATION_IN_PROGRESS__=false;
-    authBusy=false;
-    if(btn){btn.disabled=false;btn.innerText=old || (isLoginMode?'Login':'Register');}
-  }
+  }finally{authBusy=false;if(btn){btn.disabled=false;btn.innerText=old|| (isLoginMode?'Login':'Register');}}
 }
 async function initV3(){
   if(window.__HAMU_V3_INITED)return; window.__HAMU_V3_INITED=true;
@@ -4522,12 +4455,6 @@ async function initV3(){
     const oldCycle=cycleKey(); db('votes/'+oldCycle).off();
     firebase.auth().onAuthStateChanged(async u=>{
       firebaseAuthUser=u||null;firebaseAuthReady=true;
-      if(window.__HAMU_REGISTRATION_IN_PROGRESS__) {
-        // Registration owns the newly-created auth user until its profile and
-        // username are fully committed. Do not auto-create a fallback profile here.
-        startRoomDirectory();
-        return;
-      }
       if(u&&!u.isAnonymous){
         if(!registrationInProgress){
           try{await loadCloudProfileV3(u);}catch(e){console.error('profile load',e);}
