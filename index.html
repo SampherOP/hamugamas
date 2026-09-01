@@ -1504,6 +1504,20 @@
             renderAllGameGrids();
             updateStreakUI();
             renderLiveServersList();
+
+            // FIX: Auto-sync rooms across tabs/windows when storage changes
+            window.addEventListener('storage', (event) => {
+                if (event.key === 'hamugang_live_servers') {
+                    renderLiveServersList();
+                }
+            });
+
+            // Periodic background sync every 3 seconds for active room list
+            setInterval(() => {
+                if (document.getElementById('multiplayerView').classList.contains('active-view')) {
+                    renderLiveServersList();
+                }
+            }, 3000);
         });
 
         function showCustomAlert(title, message) {
@@ -1936,7 +1950,6 @@
             document.getElementById('count-skull').innerText = data.skull;
             document.getElementById('count-poop').innerText = data.poop;
 
-            // Load and display actual average ratings
             let ratings = JSON.parse(localStorage.getItem(getGameRatingsKey(gameName))) || [4.8];
             let avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
             document.getElementById('starRatingText').innerText = `Average Rating: ${avg.toFixed(1)} / 5.0 ⭐ (${ratings.length} votes)`;
