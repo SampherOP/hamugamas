@@ -277,7 +277,6 @@
             gap: 15px;
             cursor: pointer;
             transition: 0.2s;
-            position: relative;
         }
 
         .trending-row-card:hover {
@@ -1217,9 +1216,11 @@
                             <label>Select Game</label>
                             <select id="mpGameSelect">
                                 <option value="Hazmob">Hazmob</option>
+                                <option value="Hamu Shooter">Hamu Shooter</option>
+                                <option value="Ragdoll Archers">Ragdoll Archers</option>
                                 <option value="Hamu Fighter">Hamu Fighter</option>
                                 <option value="Veck.io">Veck.io</option>
-                                <option value="Ragdoll Archers">Ragdoll Archers</option>
+                                <option value="Hamu Minecraft">Hamu Minecraft</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1356,10 +1357,10 @@
                     <div class="game-tab-pane active" id="paneChat">
                         <div style="font-size: 12px; color: var(--text-muted);" id="chatRoomStatusLabel">Live Room Chat Box</div>
                         <div class="chat-messages-container" id="gameChatBox">
-                            <div class="chat-msg-item"><span class="chat-msg-user">System:</span>Welcome to the game chat! Share your tips here.</div>
+                            <div class="chat-msg-item"><span class="chat-msg-user">System:</span>Welcome to the room chat! Talk about your progress here.</div>
                         </div>
                         <div class="chat-input-area">
-                            <input type="text" id="chatMessageInput" placeholder="Type a tip or chat..." onkeydown="if(event.key==='Enter') sendGameChatMsg()">
+                            <input type="text" id="chatMessageInput" placeholder="Type room progress or tips..." onkeydown="if(event.key==='Enter') sendGameChatMsg()">
                             <button class="btn btn-primary" style="padding: 8px 12px;" onclick="sendGameChatMsg()"><i class="fa-solid fa-paper-plane"></i></button>
                         </div>
                     </div>
@@ -1503,6 +1504,7 @@
             loadUniversalProgress();
             renderAllGameGrids();
             updateStreakUI();
+            autoCleanInactiveServers();
             renderLiveServersList();
         });
 
@@ -1616,6 +1618,7 @@
             } else if (viewName === 'multiplayer') {
                 document.getElementById('multiplayerView').classList.add('active-view');
                 document.getElementById('navMultiplayer').classList.add('active');
+                autoCleanInactiveServers();
                 renderLiveServersList();
             }
         }
@@ -1716,16 +1719,22 @@
         }
 
         function getLiveServersList() {
-            let servers = JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
-            if (servers.length > 5) {
-                servers = servers.slice(0, 5);
-                localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
-            }
-            return servers;
+            return JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
         }
 
         function saveLiveServersList(servers) {
             localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
+        }
+
+        // AUTO-CLEAN INACTIVE/OLD SERVERS (older than 30 mins or empty)
+        function autoCleanInactiveServers() {
+            let servers = getLiveServersList();
+            let now = Date.now();
+            let cleaned = servers.filter(s => {
+                // Keep servers created within the last 30 minutes
+                return (now - (s.timestamp || now)) < 30 * 60 * 1000;
+            });
+            saveLiveServersList(cleaned);
         }
 
         function clearAllInactiveRooms() {
@@ -1748,7 +1757,8 @@
                 game: game,
                 host: hostName,
                 password: password,
-                time: timeStr
+                time: timeStr,
+                timestamp: Date.now()
             };
 
             servers.unshift(newServer);
@@ -1757,7 +1767,7 @@
             document.getElementById('roomCodeText').innerText = `${game} Room: ${randomCode} ${password ? '[🔒 Locked]' : '[🌐 Public]'}`;
             document.getElementById('roomCodeResultBox').style.display = 'block';
             renderLiveServersList();
-            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) is now live!`);
+            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) for ${game} is now live!`);
         }
 
         function joinGeneratedRoomNow() {
@@ -1783,8 +1793,7 @@
             let server = servers.find(s => s.code.toUpperCase() === roomCode.toUpperCase());
 
             if (!server) {
-                let gameObj = allGames[0];
-                launchGame(gameObj.name, gameObj.url, roomCode);
+                showCustomAlert("Server Not Found", `❌ Room code "${roomCode}" is either inactive or doesn't exist anymore!`);
                 return;
             }
 
@@ -1797,12 +1806,14 @@
                 }
             }
 
-            let gameObj = allGames.find(g => g.name === server.game) || allGames[0];
+            // Find exact game from allGames mapping
+            let gameObj = allGames.find(g => g.name.toLowerCase() === server.game.toLowerCase()) || allGames[0];
             showCustomAlert("Connected!", `🚀 Successfully joined ${server.host}'s live server for ${server.game}!`);
             launchGame(gameObj.name, gameObj.url, server.code);
         }
 
         function renderLiveServersList() {
+            autoCleanInactiveServers();
             let servers = getLiveServersList();
             let tbody = document.getElementById('liveServersTableBody');
 
@@ -1831,17 +1842,18 @@
         }
 
         function getGameChatKey(gameName, roomCode) {
-            return 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase() + '_' + (roomCode || 'solo').toLowerCase();
+            return 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase + '_' + (roomCode || 'solo').toLowerCase();
         }
 
         function loadGameChat(gameName, roomCode) {
             let chatBox = document.getElementById('gameChatBox');
             let statusLabel = document.getElementById('chatRoomStatusLabel');
-            statusLabel.innerText = `Live Room Chat (${roomCode || 'SOLO'} Mode)`;
+            let cleanRoom = roomCode || 'SOLO';
+            statusLabel.innerText = `Live Room Chat [${cleanRoom}] (${gameName})`;
 
-            let key = getGameChatKey(gameName, roomCode);
+            let key = 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase() + '_' + cleanRoom.toLowerCase();
             let messages = JSON.parse(localStorage.getItem(key)) || [
-                { user: "System", text: `Welcome to room [${roomCode || 'SOLO'}] chat! Type your messages below.` }
+                { user: "System", text: `Welcome to room [${cleanRoom}] chat! Discuss your progress & gameplay here.` }
             ];
 
             let html = '';
@@ -1859,15 +1871,16 @@
 
             const currentUser = getActiveUserObj();
             const username = currentUser ? currentUser.username : "GuestPlayer";
+            let cleanRoom = currentActiveRoomCode || 'SOLO';
 
-            let key = getGameChatKey(currentRatingGame, currentActiveRoomCode);
+            let key = 'hamugang_chat_' + currentRatingGame.replace(/\s+/g, '_').toLowerCase() + '_' + cleanRoom.toLowerCase();
             let messages = JSON.parse(localStorage.getItem(key)) || [];
             messages.push({ user: username, text: text });
             if (messages.length > 50) messages.shift();
 
             localStorage.setItem(key, JSON.stringify(messages));
             input.value = '';
-            loadGameChat(currentRatingGame, currentActiveRoomCode);
+            loadGameChat(currentRatingGame, cleanRoom);
         }
 
         function switchGameSidebarTab(tabName, btnElement) {
@@ -2157,7 +2170,6 @@
             document.getElementById('exploreGrid').innerHTML = html;
         }
 
-        // --- LOCAL STORAGE SECURE AUTH SYSTEM (NO VERCEL BACKEND ERROR) ---
         function handleAuthSubmit() {
             const errorDiv = document.getElementById('authErrorMsg');
             errorDiv.style.display = 'none';
@@ -2226,7 +2238,7 @@
                 loadUniversalProgress();
                 renderAllGameGrids();
                 updateStreakUI();
-                showCustomAlert("Success", "Registration Successful! Account saved safely in Vercel dictionary storage.");
+                showCustomAlert("Success", "Registration Successful! Account saved safely.");
             }
         }
 
@@ -2447,7 +2459,7 @@
             if (event.target == document.getElementById('profileModal')) {
                 closeProfileModal();
             }
-            if (event.target == document.getElementById('customAlertModal')) {
+            if (event.target == document.endTarget || event.target == document.getElementById('customAlertModal')) {
                 closeCustomAlert();
             }
             if (event.target == document.getElementById('controlsModal')) {
