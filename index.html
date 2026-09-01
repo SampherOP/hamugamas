@@ -4064,211 +4064,282 @@ async function handleVoteV3(game,event){
   }catch(e){console.error(e);show('Vote Error',e?.message||'Could not save your vote online.');}
 }
 
-// ---------- ROOM DIRECTORY ----------
-function countUniquePlayers(obj){ return new Set(Object.values(obj||{}).map(x=>x?.uid).filter(Boolean)).size; }
-function clearRoomPlayerListener(code){
-  if(roomPlayerListeners[code]){ roomPlayerListeners[code].off(); delete roomPlayerListeners[code]; }
-  delete roomCounts[code];
+// ---------- REALTIME MULTIPLAYER V4 ----------
+function countUniquePlayers(obj){
+  return new Set(Object.values(obj || {}).map(v => v && v.uid).filter(Boolean)).size;
 }
-function attachRoomCount(code){
-  if(roomPlayerListeners[code]) return;
-  const r=db('roomPlayers/'+code); roomPlayerListeners[code]=r;
-  r.on('value',s=>{ roomCounts[code]=countUniquePlayers(s.val()||{}); renderRooms(); updateActiveCount(); });
+
+function normalizeRoomCode(value){
+  return String(value || '').trim().toUpperCase().replace(/\s+/g,'');
 }
-function renderRooms(){
-  const tbody=document.getElementById('liveServersTableBody'); if(!tbody) return;
-  if(!firebaseReady){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">Connecting to online multiplayer...</td></tr>';return;}
-  if(!onlineUser()){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">Login/Register to view live online rooms.</td></tr>';return;}
-  const rooms=Object.entries(window.__hamuRoomMeta||{}).map(([code,r])=>({code,r,players:roomCounts[code]||0}));
-  rooms.sort((a,b)=>Number(b.r.createdAt||0)-Number(a.r.createdAt||0));
-  if(!rooms.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">No active online rooms right now. Create one above!</td></tr>';return;}
-  tbody.innerHTML=rooms.map(({code,r,players})=>{
-    const full=players>=MAX_PLAYERS, own=onlineUser()?.uid===r.hostUid;
+function roomCodeOk(value){ return /^HAMU-\d{4}$/.test(normalizeRoomCode(value)); }
+function onlineUserV4(){
+  const u = firebase.auth().currentUser || firebaseAuthUser;
+  return u && !u.isAnonymous ? u : null;
+}
+function roomPath(code){ return firebase.database().ref('rooms/' + normalizeRoomCode(code)); }
+function hostIndexPath(uid){ return firebase.database().ref('hostRooms/' + uid); }
+function roomPlayersPath(code){ return roomPath(code).child('players'); }
+function roomChatPath(code){ return roomPath(code).child('chat'); }
+function roomReactionsPath(code){ return roomPath(code).child('reactions'); }
+function roomHostWithinGrace(room){
+  if(!room) return false;
+  if(room.hostOnline !== false) return true;
+  const t = Number(room.hostDisconnectedAt || 0);
+  return !t || Date.now() - t < HOST_GRACE_MS;
+}
+function roomPlayerKey(uid){ return String(uid); }
+
+function renderRooms(){ renderRoomsV4(roomDirectorySnapshot); }
+
+function renderRoomsV4(snapshot){
+  const tbody = document.getElementById('liveServersTableBody');
+  if(!tbody) return;
+  const u = onlineUserV4();
+  if(!u){
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">Login/Register to view live online rooms.</td></tr>';
+    return;
+  }
+  const rooms=[];
+  if(snapshot){
+    snapshot.forEach(child=>{
+      const r=child.val() || {};
+      if(!roomHostWithinGrace(r)) return;
+      const players=r.players || {};
+      const count=countUniquePlayers(players);
+      roomCounts[child.key]=count;
+      rooms.push({code:child.key,room:r,players:count});
+    });
+  }
+  rooms.sort((a,b)=>Number(b.room.createdAt||0)-Number(a.room.createdAt||0));
+  if(!rooms.length){
+    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">No active online rooms right now. Create one above!</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rooms.map(({code,room,players})=>{
+    const own=u.uid===room.hostUid;
+    const full=players>=MAX_PLAYERS && !own;
     const action=own
       ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px;border-color:var(--error-color);color:var(--error-color);" onclick="deleteHostedRoom('${esc(code)}')">Delete 🗑️</button>`
       : `<button class="btn ${full?'btn-outline':'btn-primary'}" style="padding:4px 12px;font-size:12px;" ${full?'disabled':''} onclick="attemptJoinServer('${esc(code)}')">${full?'Room Full ❌':'Join Live 🚀'}</button>`;
-    return `<tr><td style="font-weight:600;"><i class="fa-solid fa-gamepad" style="color:var(--accent-hover);margin-right:5px;"></i>${esc(r.game||'Unknown')}</td><td>${esc(r.host||'Player')}</td><td style="font-family:monospace;font-weight:bold;color:#ffd700;">${esc(code)}</td><td><span style="font-weight:bold;color:${full?'var(--error-color)':'var(--success-color)'};">${players}/${MAX_PLAYERS}</span></td><td style="color:var(--text-muted);">${esc(window.formatRoomTime?.(r.createdAt)||'Just now')}</td><td>${r.passwordHash?'<span style="color:var(--error-color);">🔒 Locked</span>':'<span style="color:var(--success-color);">🌐 Public</span>'}</td><td style="text-align:right;">${action}</td></tr>`;
+    return `<tr><td style="font-weight:600;">${esc(room.game||'Unknown')}</td><td>${esc(room.host||'Player')}</td><td style="font-family:monospace;font-weight:bold;color:#ffd700;">${esc(code)}</td><td><span style="font-weight:bold;">${players}/${MAX_PLAYERS}</span></td><td style="color:var(--text-muted);">${esc(window.formatRoomTime?.(room.createdAt)||'Just now')}</td><td>${room.passwordHash?'<span style="color:var(--error-color);">🔒 Locked</span>':'<span style="color:var(--success-color);">🌐 Public</span>'}</td><td style="text-align:right;">${action}</td></tr>`;
   }).join('');
 }
-function updateActiveCount(){ const code=currentActiveRoomCode; if(code && code!=='SOLO') updateActiveRoomPlayerCount?.(roomCounts[code]||0); }
-async function removeStaleRoom(code){
-  const ref=db('rooms/'+code); const s=await ref.once('value'); if(!s.exists()) return;
-  const r=s.val()||{}; if(r.hostOnline!==false) return;
-  const t=Number(r.hostDisconnectedAt||0);
-  if(t && Date.now()-t>=HOST_GRACE_MS){
-    try{await ref.remove();}catch(e){console.warn('stale room remove',e);}
-  }
-}
+
 function startRoomDirectory(){
-  if(!firebaseRoomsRef) firebaseRoomsRef=db('rooms');
+  if(!firebaseRoomsRef) firebaseRoomsRef=firebase.database().ref('rooms');
   if(roomsValueHandler) firebaseRoomsRef.off('value',roomsValueHandler);
-  roomsValueHandler=s=>{
-    const next={};
-    s?.forEach(c=>{
-      const r=c.val()||{};
+  roomsValueHandler=snapshot=>{
+    roomDirectorySnapshot = snapshot;
+    renderRoomsV4(snapshot);
+    snapshot.forEach(child=>{
+      const r=child.val() || {};
       if(r.hostOnline===false){
         const t=Number(r.hostDisconnectedAt||0);
-        if(t && Date.now()-t>=HOST_GRACE_MS){ removeStaleRoom(c.key); return; }
-      }
-      next[c.key]=r; attachRoomCount(c.key);
-      if(r.hostOnline===false){
-        const left=Math.max(100,HOST_GRACE_MS-(Date.now()-Number(r.hostDisconnectedAt||0)));
-        setTimeout(()=>removeStaleRoom(c.key),left+50);
+        if(t){
+          const left=Math.max(100,HOST_GRACE_MS-(Date.now()-t));
+          setTimeout(()=>{
+            if(Date.now()-t>=HOST_GRACE_MS) renderRoomsV4(snapshot);
+          },left+50);
+        }
       }
     });
-    Object.keys(window.__hamuRoomMeta||{}).forEach(code=>{if(!next[code])clearRoomPlayerListener(code);});
-    window.__hamuRoomMeta=next; renderRooms();
   };
   firebaseRoomsRef.on('value',roomsValueHandler);
 }
 
-async function findHostedRoom(uid){
-  const idx=await db('hostRooms/'+uid).once('value'); const code=idx.val()?.code;
-  if(code){
-    const s=await db('rooms/'+code).once('value');
-    if(s.exists() && s.val()?.hostUid===uid){
-      const r=s.val();
-      if(r.hostOnline!==false || Date.now()-Number(r.hostDisconnectedAt||0)<HOST_GRACE_MS) return {code,room:r};
-      await removeStaleRoom(code);
-    }
-    try{await db('hostRooms/'+uid).remove();}catch(_){ }
+async function findUserHostedRoom(uid){
+  const idx=await hostIndexPath(uid).once('value');
+  const indexed=idx.val();
+  if(indexed && indexed.code){
+    const code=normalizeRoomCode(indexed.code);
+    const snap=await roomPath(code).once('value');
+    if(snap.exists() && snap.child('hostUid').val()===uid && roomHostWithinGrace(snap.val())) return {code,room:snap.val()};
+    try{await hostIndexPath(uid).remove();}catch(_){ }
   }
-  const all=await db('rooms').once('value'); let found=null;
-  all.forEach(c=>{const r=c.val()||{};if(r.hostUid===uid) found={code:c.key,room:r};});
-  if(found){
-    if(found.room.hostOnline!==false || Date.now()-Number(found.room.hostDisconnectedAt||0)<HOST_GRACE_MS){await db('hostRooms/'+uid).set({code:found.code});return found;}
-    await removeStaleRoom(found.code);
-  }
+  const all=await firebase.database().ref('rooms').once('value');
+  let found=null;
+  all.forEach(c=>{
+    const r=c.val()||{};
+    if(!found && r.hostUid===uid && roomHostWithinGrace(r)) found={code:c.key,room:r};
+  });
+  if(found){try{await hostIndexPath(uid).set({code:found.code});}catch(_){ } return found;}
   return null;
 }
-async function reserveHost(uid,code){
-  const r=db('hostRooms/'+uid);
-  const tx=await r.transaction(cur=>{ if(cur?.code && cur.code!==code) return; return {code}; });
-  return tx.committed;
-}
-async function uniqueCode(){
-  for(let i=0;i<50;i++){
-    const c='HAMU-'+Math.floor(1000+Math.random()*9000);
-    const s=await db('rooms/'+c).once('value'); if(!s.exists()) return c;
+
+async function uniqueRoomCodeV4(){
+  for(let i=0;i<40;i++){
+    const code='HAMU-'+Math.floor(1000+Math.random()*9000);
+    const snap=await roomPath(code).once('value');
+    if(!snap.exists()) return code;
   }
-  throw new Error('Could not generate a unique room code.');
+  throw new Error('Could not generate a unique room code. Please try again.');
 }
 
-async function createRoomV3(){
-  if(window.__hamuCreateBusy) return; window.__hamuCreateBusy=true;
+async function reserveHostV4(uid,code){
+  const ref=hostIndexPath(uid);
+  const tx=await ref.transaction(current=>{
+    if(current && current.code && current.code!==code) return;
+    return {code};
+  });
+  return !!tx.committed;
+}
+
+async function hashRoomPasswordV4(password){
+  if(!password) return null;
+  const bytes=new TextEncoder().encode(password);
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function createRoomV4(){
+  if(window.__hamuCreateBusy) return;
+  window.__hamuCreateBusy=true;
+  let code=null, reserved=false;
   try{
-    const u=await waitAuth(); if(!u || u.isAnonymous){show('Login Required','Login/register first, then create your live server.');openModal?.('login');return;}
-    const existing=await findHostedRoom(u.uid);
-    if(existing){document.getElementById('roomCodeText').innerText=`${existing.room.game||'Game'} Room: ${existing.code}`;document.getElementById('roomCodeResultBox').style.display='block';show('You Already Host a Server',`Only one hosted server is allowed. Delete ${existing.code} first.`);return;}
-    const code=await uniqueCode();
-    if(!(await reserveHost(u.uid,code))) throw new Error('Your account already has a hosted server.');
+    const u=await new Promise(resolve=>{
+      const current=onlineUserV4();
+      if(current) return resolve(current);
+      let tries=0;
+      const timer=setInterval(()=>{const x=onlineUserV4();if(x){clearInterval(timer);resolve(x);}else if(++tries>100){clearInterval(timer);resolve(null);}},50);
+    });
+    if(!u){showCustomAlert('Login Required','Please login/register before creating a live server.');openModal?.('login');return;}
+    const existing=await findUserHostedRoom(u.uid);
+    if(existing){
+      document.getElementById('roomCodeText').innerText=`${existing.room.game||'Game'} Room: ${existing.code}`;
+      document.getElementById('roomCodeResultBox').style.display='block';
+      showCustomAlert('You Already Host a Server',`Only one server is allowed per account. Delete ${existing.code} before creating another.`);
+      return;
+    }
+    code=await uniqueRoomCodeV4();
+    reserved=await reserveHostV4(u.uid,code);
+    if(!reserved) throw new Error('Your account already has a hosted server.');
     const game=document.getElementById('mpGameSelect')?.value||'Hazmob';
     const password=document.getElementById('mpRoomPassword')?.value.trim()||'';
-    const room={game,host:userName(),hostUid:u.uid,hostOnline:true,hostDisconnectedAt:null,createdAt:Date.now(),passwordHash:password?await sha256?.(password):null};
-    if(password && !room.passwordHash) room.passwordHash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(password)).then(a=>Array.from(new Uint8Array(a)).map(b=>b.toString(16).padStart(2,'0')).join(''));
-    try{
-      const tx=await db('rooms/'+code).transaction(cur=>cur===null?room:undefined);
-      if(!tx.committed) throw new Error('ROOM_CODE_COLLISION');
-      await joinRoomInternal(code,room,true);
-      document.getElementById('roomCodeText').innerText=`${game} Room: ${code} ${password?'[🔒 Locked]':'[🌐 Public]'}`;
-      document.getElementById('roomCodeResultBox').style.display='block';
-      show('Room Created Successfully!',`Room ${code} is live. Other devices can see it now.`);
-    }catch(e){
-      try{await db('rooms/'+code).remove();}catch(_){ }
-      try{const s=await db('hostRooms/'+u.uid).once('value');if(s.val()?.code===code)await db('hostRooms/'+u.uid).remove();}catch(_){ }
-      throw e;
-    }
-  }catch(e){console.error('CREATE V3',e);show('Room Creation Failed',e?.message||'Could not create the live room.');}
-  finally{window.__hamuCreateBusy=false;}
-}
-async function deleteRoomV3(code){
-  const u=onlineUser(); if(!u){show('Login Required','Login first.');return;}
-  code=String(code||currentActiveRoomCode||'').trim().toUpperCase(); if(!roomCodeOk(code)){show('No Hosted Server','No valid hosted server found.');return;}
-  try{
-    const s=await db('rooms/'+code).once('value'); if(!s.exists()){await db('hostRooms/'+u.uid).remove();return;}
-    if(s.val()?.hostUid!==u.uid){show('Not Allowed','Only the room host can delete this server.');return;}
-    await db('rooms/'+code).remove();
-    const idx=await db('hostRooms/'+u.uid).once('value');if(idx.val()?.code===code)await db('hostRooms/'+u.uid).remove();
-    if(currentActiveRoomCode===code) detachRoomV3();
-    document.getElementById('roomCodeResultBox').style.display='none'; show('Server Deleted',`Room ${code} has been deleted.`);
-  }catch(e){console.error(e);show('Delete Failed',e?.message||'Could not delete the server.');}
+    const passwordHash=await hashRoomPasswordV4(password);
+    const roomData={game,host:userName(),hostUid:u.uid,hostOnline:true,hostDisconnectedAt:null,createdAt:firebase.database.ServerValue.TIMESTAMP,passwordHash,players:{}};
+    const roomRef=roomPath(code);
+    const tx=await roomRef.transaction(current=>current===null?roomData:undefined);
+    if(!tx.committed) throw new Error('ROOM_CODE_COLLISION');
+    currentActiveRoomCode=code;activeRoomIsHost=true;activeRoomRef=roomRef;
+    const playerRef=roomPlayersPath(code).child(roomPlayerKey(u.uid));
+    activeRoomPlayerRef=playerRef;
+    await playerRef.set({uid:u.uid,username:userName(),online:true,joinedAt:firebase.database.ServerValue.TIMESTAMP});
+    await playerRef.onDisconnect().remove();
+    await roomRef.onDisconnect().update({hostOnline:false,hostDisconnectedAt:firebase.database.ServerValue.TIMESTAMP});
+    attachRoomListenersV4(code,game,true);
+    document.getElementById('roomCodeText').innerText=`${game} Room: ${code} ${password?'[🔒 Locked]':'[🌐 Public]'}`;
+    document.getElementById('roomCodeResultBox').style.display='block';
+    showCustomAlert('Room Created Successfully!',`Room ${code} is live. Other devices can see it now.`);
+  }catch(e){
+    console.error('CREATE V4',e);
+    if(code){try{await roomPath(code).remove();}catch(_){ } }
+    const u=onlineUserV4(); if(reserved&&u){try{await hostIndexPath(u.uid).remove();}catch(_){ }}
+    showCustomAlert('Room Creation Failed',e?.message||String(e));
+  }finally{window.__hamuCreateBusy=false;}
 }
 
-function detachRoomV3(){
-  if(activeRoomPlayersRef) activeRoomPlayersRef.off();
-  if(activeRoomChatRef) activeRoomChatRef.off();
-  if(activeRoomReactionsRef) activeRoomReactionsRef.off();
-  if(activeRoomConnectionRef && activeRoomConnectionHandler) activeRoomConnectionRef.off('value',activeRoomConnectionHandler);
-  activeRoomPlayersRef=null;activeRoomChatRef=null;activeRoomReactionsRef=null;activeRoomConnectionRef=null;activeRoomConnectionHandler=null;activeRoomPlayerRef=null;activeRoomRef=null;activeRoomConnected=false;activeRoomIsHost=false;
-}
-async function joinRoomInternal(code,room,isHost){
-  const u=onlineUser(); if(!u) throw new Error('LOGIN_REQUIRED');
-  detachRoomV3();
-  const clientId=(hamuClientId||sessionStorage.getItem('hamugang_client_id')||crypto.randomUUID());
-  sessionStorage.setItem('hamugang_client_id',clientId); hamuClientId=clientId;
-  const playerRef=db('roomPlayers/'+code+'/'+u.uid+'/'+clientId);
-  const chatRef=db('roomChat/'+code); const reactRef=db('roomReactions/'+code);
-  currentActiveRoomCode=code;currentRatingGame=room.game||'Hazmob';activeRoomIsHost=!!isHost;activeRoomPlayerRef=playerRef;activeRoomPlayersRef=db('roomPlayers/'+code);activeRoomChatRef=chatRef;activeRoomReactionsRef=reactRef;activeRoomRef=db('rooms/'+code);
-  const presence={uid:u.uid,username:userName(),online:true,joinedAt:Date.now()};
-  await playerRef.set(presence);
-  await playerRef.onDisconnect().remove();
-  if(isHost){
-    await db('rooms/'+code).update({hostOnline:true,hostDisconnectedAt:null});
-    await db('rooms/'+code).onDisconnect().update({hostOnline:false,hostDisconnectedAt:firebase.database.ServerValue.TIMESTAMP});
-  }
-  activeRoomConnectionRef=db('.info/connected');
+function attachRoomListenersV4(code,game,isHost){
+  detachRoomListenersV4();
+  const u=onlineUserV4(); if(!u) throw new Error('LOGIN_REQUIRED');
+  const roomRef=roomPath(code);
+  const playerRef=roomPlayersPath(code).child(roomPlayerKey(u.uid));
+  const chatRef=roomChatPath(code);
+  const reactRef=roomReactionsPath(code);
+  currentActiveRoomCode=code;currentRatingGame=game;activeRoomIsHost=!!isHost;
+  activeRoomRef=roomRef;activeRoomPlayerRef=playerRef;activeRoomPlayersRef=roomPlayersPath(code);activeRoomChatRef=chatRef;activeRoomReactionsRef=reactRef;
+  const presence=()=>playerRef.set({uid:u.uid,username:userName(),online:true,joinedAt:firebase.database.ServerValue.TIMESTAMP});
+  activeRoomConnectionRef=firebase.database().ref('.info/connected');
   activeRoomConnectionHandler=async snap=>{
     activeRoomConnected=snap.val()===true;
     if(activeRoomConnected){
-      try{await playerRef.set({...presence,joinedAt:Date.now()});await playerRef.onDisconnect().remove();if(isHost){await db('rooms/'+code).update({hostOnline:true,hostDisconnectedAt:null});await db('rooms/'+code).onDisconnect().update({hostOnline:false,hostDisconnectedAt:firebase.database.ServerValue.TIMESTAMP});}}catch(e){console.warn('presence reconnect',e);}
+      try{await presence();await playerRef.onDisconnect().remove();if(isHost){await roomRef.update({hostOnline:true,hostDisconnectedAt:null});await roomRef.onDisconnect().update({hostOnline:false,hostDisconnectedAt:firebase.database.ServerValue.TIMESTAMP});}}catch(e){console.warn('room reconnect',e);}
     }
   };
   activeRoomConnectionRef.on('value',activeRoomConnectionHandler);
-  activeRoomPlayersRef.on('value',s=>{roomCounts[code]=countUniquePlayers(s.val()||{});updateActiveCount();renderRooms();});
+  activeRoomPlayersRef.on('value',s=>{roomCounts[code]=countUniquePlayers(s.val()||{});updateActiveRoomPlayerCount?.(roomCounts[code]);renderRoomsV4(roomDirectorySnapshot);});
   activeRoomChatRef.limitToLast(100).on('value',s=>{const arr=[];s.forEach(c=>{const v=c.val();if(v)arr.push({...v,_key:c.key});});arr.sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0));renderRealtimeChat?.(arr);});
-  activeRoomReactionsRef.on('value',s=>renderReactionData(s.val()||{}));
-  loadGameChat?.(room.game||'Hazmob',code); renderReactionData({});
-  updateActiveCount();
+  activeRoomReactionsRef.on('value',s=>renderReactionData?.(s.val()||{}));
+  presence();
 }
-async function joinRoomV3(raw){
-  const u=await waitAuth(); if(!u || u.isAnonymous){show('Login Required','Login/register first to join a live room.');openModal?.('login');return;}
-  let code=String(raw||'').trim().toUpperCase().replace(/\s+/g,''); if(!roomCodeOk(code)){show('Invalid Room Code','Use a code like HAMU-1234.');return;}
+
+function detachRoomListenersV4(){
+  if(activeRoomPlayersRef) activeRoomPlayersRef.off();
+  if(activeRoomChatRef) activeRoomChatRef.off();
+  if(activeRoomReactionsRef) activeRoomReactionsRef.off();
+  if(activeRoomConnectionRef&&activeRoomConnectionHandler) activeRoomConnectionRef.off('value',activeRoomConnectionHandler);
+  activeRoomPlayersRef=null;activeRoomChatRef=null;activeRoomReactionsRef=null;activeRoomConnectionRef=null;activeRoomConnectionHandler=null;activeRoomPlayerRef=null;activeRoomRef=null;activeRoomConnected=false;activeRoomIsHost=false;
+}
+
+async function joinRoomV4(raw){
+  const u=onlineUserV4(); if(!u){showCustomAlert('Login Required','Please login/register before joining a live room.');openModal?.('login');return;}
+  const code=normalizeRoomCode(raw);
+  if(!roomCodeOk(code)){showCustomAlert('Invalid Room Code','Use a code like HAMU-1234.');return;}
   try{
-    const ref=db('rooms/'+code); const s=await ref.once('value'); if(!s.exists()){show('Room Not Found',`Room ${code} does not exist or has already closed.`);return;}
-    const room=s.val()||{};
-    if(room.hostOnline===false){const t=Number(room.hostDisconnectedAt||0);if(t && Date.now()-t>=HOST_GRACE_MS){await removeStaleRoom(code);show('Room Closed','The host has been offline for more than 10 seconds.');return;}}
-    if(room.passwordHash){const entered=prompt(`🔒 ${code} is password protected. Enter room password:`);if(entered===null)return;const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(entered)).then(a=>Array.from(new Uint8Array(a)).map(b=>b.toString(16).padStart(2,'0')).join(''));if(h!==room.passwordHash){show('Access Denied','Incorrect room password.');return;}}
-    const ps=await db('roomPlayers/'+code).once('value'); const count=countUniquePlayers(ps.val()||{});
-    const already=!!(ps.child(u.uid).exists()); if(!already && count>=MAX_PLAYERS){show('Room Full','This room already has 10 players.');return;}
-    await joinRoomInternal(code,room,room.hostUid===u.uid);
+    const snap=await roomPath(code).once('value');
+    if(!snap.exists()){showCustomAlert('Room Not Found',`Room ${code} does not exist or has already closed.`);return;}
+    const room=snap.val()||{};
+    if(!roomHostWithinGrace(room)){showCustomAlert('Room Closed','The host has been offline for more than 10 seconds.');return;}
+    if(room.passwordHash){const entered=prompt(`🔒 ${code} is password protected. Enter room password:`);if(entered===null)return;const h=await hashRoomPasswordV4(entered);if(h!==room.passwordHash){showCustomAlert('Access Denied','Incorrect room password.');return;}}
+    const ps=snap.child('players').val()||{};
+    const count=countUniquePlayers(ps);
+    const already=!!ps[u.uid];
+    if(!already&&count>=MAX_PLAYERS){showCustomAlert('Room Full','This room already has 10 players.');return;}
+    attachRoomListenersV4(code,room.game||'Hazmob',room.hostUid===u.uid);
     const g=(allGames||[]).find(x=>x.name===room.game)||(allGames||[])[0];
-    if(g) await window.launchGame?.(g.name,g.url,code); else currentActiveRoomCode=code;
-    show('Connected!',`Joined ${room.host||'Player'}'s ${room.game||'game'} room. ${countUniquePlayers((await db('roomPlayers/'+code).once('value')).val()||{})}/10 players.`);
-  }catch(e){console.error('JOIN V3',e);show('Join Failed',e?.message||'Could not join the room.');}
+    if(g) await window.launchGame?.(g.name,g.url,code);
+    showCustomAlert('Connected!',`Joined ${room.host||'Player'}'s ${room.game||'game'} room.`);
+  }catch(e){console.error('JOIN V4',e);showCustomAlert('Join Failed',e?.message||String(e));}
 }
-async function leaveRoomV3(){
-  const code=currentActiveRoomCode; if(!code||code==='SOLO'){detachRoomV3();return;}
+
+async function deleteRoomV4(raw){
+  const u=onlineUserV4();if(!u){showCustomAlert('Login Required','Login first.');return;}
+  const code=normalizeRoomCode(raw||currentActiveRoomCode);
+  if(!roomCodeOk(code)){showCustomAlert('No Hosted Server','No valid hosted server found.');return;}
+  try{
+    const snap=await roomPath(code).once('value');
+    if(!snap.exists()){try{await hostIndexPath(u.uid).remove();}catch(_){ }return;}
+    if(snap.child('hostUid').val()!==u.uid){showCustomAlert('Not Allowed','Only the room host can delete this server.');return;}
+    await roomPath(code).remove();
+    const idx=await hostIndexPath(u.uid).once('value');if(idx.val()?.code===code)await hostIndexPath(u.uid).remove();
+    if(currentActiveRoomCode===code){detachRoomListenersV4();currentActiveRoomCode='SOLO';}
+    document.getElementById('roomCodeResultBox').style.display='none';renderRoomsV4(roomDirectorySnapshot);showCustomAlert('Server Deleted',`Room ${code} has been deleted.`);
+  }catch(e){console.error('DELETE V4',e);showCustomAlert('Delete Failed',e?.message||String(e));}
+}
+
+async function leaveRoomV4(){
+  const code=currentActiveRoomCode;if(!code||code==='SOLO'){detachRoomListenersV4();return;}
+  const u=onlineUserV4();
   try{if(activeRoomPlayerRef)await activeRoomPlayerRef.remove();}catch(_){ }
-  const wasHost=activeRoomIsHost,u=onlineUser();
-  if(wasHost&&u){try{await db('rooms/'+code).remove();}catch(_){ }try{const s=await db('hostRooms/'+u.uid).once('value');if(s.val()?.code===code)await db('hostRooms/'+u.uid).remove();}catch(_){ }}
-  detachRoomV3(); currentActiveRoomCode='SOLO'; document.getElementById('roomCodeResultBox')?.style && (document.getElementById('roomCodeResultBox').style.display='none'); renderRooms();
+  if(activeRoomIsHost&&u){try{await roomPath(code).remove();}catch(_){ }try{await hostIndexPath(u.uid).remove();}catch(_){ }}
+  detachRoomListenersV4();currentActiveRoomCode='SOLO';
 }
-async function sendChatV3(){
-  const input=document.getElementById('chatMessageInput'), text=input?.value.trim(); if(!text)return;
-  const u=onlineUser(); const code=currentActiveRoomCode;
-  if(!u||!code||code==='SOLO'||!activeRoomChatRef){show('Join a Room First','Join a live multiplayer room before chatting.');return;}
+
+async function sendChatV4(){
+  const input=document.getElementById('chatMessageInput'),text=input?.value.trim();if(!text)return;
+  const u=onlineUserV4();
+  if(!u||currentActiveRoomCode==='SOLO'||!activeRoomChatRef){showCustomAlert('Join a Room First','Join a live multiplayer room before chatting.');return;}
   try{await activeRoomChatRef.push({uid:u.uid,user:userName(),text:text.slice(0,300),timestamp:firebase.database.ServerValue.TIMESTAMP});input.value='';input.focus();}
-  catch(e){console.error(e);show('Chat Error',e?.message||'Message could not be sent.');}
+  catch(e){console.error('CHAT V4',e);showCustomAlert('Chat Error',e?.message||String(e));}
 }
-function renderReactionData(data){
-  const d={fire:0,star:0,skull:0,poop:0}; for(const k of Object.keys(d)){const v=data?.[k];d[k]=v&&typeof v==='object'?Object.keys(v).length:Number(v)||0;}
-  ['fire','star','skull','poop'].forEach(k=>{const el=document.getElementById('count-'+k);if(el)el.innerText=d[k];});
+
+async function joinRoomInternal(code,room,isHost){
+  attachRoomListenersV4(code, room?.game || 'Hazmob', !!isHost);
 }
-async function sendReactionV3(emoji){
-  const map={'🔥':'fire','🤩':'star','💀':'skull','💩':'poop'},field=map[emoji],u=onlineUser(); if(!field||!u)return;
-  if(currentActiveRoomCode && currentActiveRoomCode!=='SOLO' && activeRoomReactionsRef){const r=activeRoomReactionsRef.child(field+'/'+u.uid);const s=await r.once('value');if(s.exists())await r.remove();else await r.set(true);return;}
-  try{await window.sendEmojiReaction?.(emoji);}catch(e){console.warn(e);}
-}
+
+// Override the UI handlers so only this one multiplayer implementation is used.
+window.generateRoomCode=createRoomV4;
+window.attemptJoinServer=joinRoomV4;
+window.joinCustomRoomCode=()=>joinRoomV4(document.getElementById('customRoomInput')?.value||'');
+window.joinGeneratedRoomNow=()=>{const m=(document.getElementById('roomCodeText')?.innerText||'').match(/HAMU-\d{4}/i);if(m)joinRoomV4(m[0]);};
+window.deleteHostedRoom=deleteRoomV4;
+window.leaveCurrentRoom=leaveRoomV4;
+window.sendGameChatMsg=sendChatV4;
+window.renderLiveServersList=()=>renderRoomsV4(roomDirectorySnapshot);
+window.renderLiveServersListFromSnapshot=()=>renderRoomsV4(roomDirectorySnapshot);
+
+// Firebase is initialized by initV3() below. It will attach the single /rooms listener.
+
 
 // ---------- AUTH ----------
 async function authV3(){
@@ -4337,16 +4408,16 @@ window.getAllVotesMap=readVoteMap;
 window.getVotingResetDateStr=cycleKey;
 window.handleDirectVote=handleVoteV3;
 window.voteForCurrentGame=()=>handleVoteV3(currentRatingGame,null);
-window.renderLiveServersList=renderRooms;
-window.renderLiveServersListFromSnapshot=()=>renderRooms();
-window.generateRoomCode=createRoomV3;
-window.deleteHostedRoom=deleteRoomV3;
-window.joinCustomRoomCode=()=>joinRoomV3(document.getElementById('customRoomInput')?.value||'');
-window.joinGeneratedRoomNow=()=>{const m=(document.getElementById('roomCodeText')?.innerText||'').match(/HAMU-\d{4}/i);if(m)return joinRoomV3(m[0]);};
-window.attemptJoinServer=joinRoomV3;
+window.renderLiveServersList=()=>renderRoomsV4(roomDirectorySnapshot);
+window.renderLiveServersListFromSnapshot=()=>renderRoomsV4(roomDirectorySnapshot);
+window.generateRoomCode=createRoomV4;
+window.deleteHostedRoom=deleteRoomV4;
+window.joinCustomRoomCode=()=>joinRoomV4(document.getElementById('customRoomInput')?.value||'');
+window.joinGeneratedRoomNow=()=>{const m=(document.getElementById('roomCodeText')?.innerText||'').match(/HAMU-\d{4}/i);if(m)return joinRoomV4(m[0]);};
+window.attemptJoinServer=joinRoomV4;
 window.attachToActiveRoom=joinRoomInternal;
-window.leaveCurrentRoom=leaveRoomV3;
-window.sendGameChatMsg=sendChatV3;
+window.leaveCurrentRoom=leaveRoomV4;
+window.sendGameChatMsg=sendChatV4;
 window.sendEmojiReaction=sendReactionV3;
 window.handleAuthSubmit=authV3;
 window.launchGame=async function(gameName,gameUrl,roomCode){
@@ -4364,7 +4435,6 @@ window.launchGame=async function(gameName,gameUrl,roomCode){
   const p=getActiveUserObj?.();if(p){const users=getAllUsers?.()||[];const u=users.find(x=>x.username===p.username);if(u){u.progress=[item,...(u.progress||[]).filter(x=>x.name!==gameName)].slice(0,50);u.playtimeMinutes=Number(u.playtimeMinutes||0)+5;localStorage.setItem('hamugang_all_users',JSON.stringify(users));try{await saveCloudProfile(u,true);}catch(e){console.warn('progress sync',e);}}}
   loadGameChat?.(gameName,currentActiveRoomCode);loadGameReactions?.(gameName);
 };
-loadUniversalProgress=loadUniversalProgress; // keep existing renderer; auth/profile listener supplies cloud data first.
 window.initRealtimeMultiplayer=initV3;
 window.__HAMUGANG_ONLINE_PATCH_READY__=true;
 
@@ -4373,7 +4443,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
 
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter' && document.getElementById('authModal')?.style.display==='flex' && document.activeElement?.tagName==='INPUT' && !authBusy){e.preventDefault();authV3();}
-  if(e.key==='Enter' && document.activeElement?.id==='customRoomInput'){e.preventDefault();joinRoomV3(document.activeElement.value);}
+  if(e.key==='Enter' && document.activeElement?.id==='customRoomInput'){e.preventDefault();joinRoomV4(document.activeElement.value);}
 });
 })();
 
