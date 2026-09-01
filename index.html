@@ -2181,9 +2181,7 @@
                     const data = await response.json();
 
                     if (response.ok && data.success) {
-                        // Save session locally as well
                         localStorage.setItem('hamugang_active_user', data.user.username);
-                        // Sync fallback storage list if needed
                         let users = getAllUsers();
                         if (!users.some(u => u.username === data.user.username)) {
                             users.push(data.user);
