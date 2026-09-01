@@ -1,0 +1,79 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "publicUsers": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "usernames": {
+      "$username": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child(\"uid\").val() === auth.uid) || (data.exists() && data.child(\"uid\").val() === auth.uid))"
+      }
+    },
+    "hostRooms": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "votes": {
+      "$cycle": {
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "!newData.exists() || (newData.isString() && newData.val().length > 0)"
+        },
+        ".read": "auth != null"
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null && (!data.child(\"hostOnline\").val() === false || !data.child(\"hostDisconnectedAt\").exists() || now < data.child(\"hostDisconnectedAt\").val() + 10000)",
+        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child(\"hostUid\").val() === auth.uid) || (data.exists() && newData.exists() && data.child(\"hostUid\").val() === auth.uid) || (data.exists() && !newData.exists() && data.child(\"hostUid\").val() === auth.uid) || (data.exists() && !newData.exists() && data.child(\"hostOnline\").val() === false && data.child(\"hostDisconnectedAt\").isNumber() && now >= data.child(\"hostDisconnectedAt\").val() + 10000))",
+        ".validate": "!newData.exists() || (newData.child(\"hostUid\").isString() && newData.child(\"game\").isString() && newData.child(\"host\").isString())"
+      },
+      ".read": "auth != null"
+    },
+    "roomPlayers": {
+      "$roomId": {
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        ".read": "auth != null"
+      }
+    },
+    "roomChat": {
+      "$roomId": {
+        "$messageId": {
+          ".read": "auth != null",
+          ".write": "auth != null && newData.child(\"uid\").val() === auth.uid",
+          ".validate": "!newData.exists() || (newData.child(\"text\").isString() && newData.child(\"text\").val().length <= 300 && newData.child(\"user\").isString())"
+        },
+        ".read": "auth != null"
+      }
+    },
+    "roomReactions": {
+      "$roomId": {
+        "$reaction": {
+          "$uid": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "!newData.exists() || newData.val() === true"
+          }
+        },
+        ".read": "auth != null"
+      }
+    }
+  }
+}
