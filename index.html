@@ -1236,6 +1236,7 @@
                         <div style="font-size: 12px; color: var(--text-muted);">Your Live Server Created:</div>
                         <div id="roomCodeText" style="font-size: 16px; font-weight: bold; color: var(--success-color); margin: 5px 0; font-family: monospace;"></div>
                         <button class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;" onclick="joinGeneratedRoomNow()">Enter Room Now 🚀</button>
+                        <button class="btn btn-outline" style="font-size: 12px; padding: 4px 10px; margin-left: 6px; border-color: var(--error-color); color: var(--error-color);" onclick="deleteHostedRoom()">Delete My Server 🗑️</button>
                     </div>
                 </div>
 
@@ -1517,6 +1518,14 @@
         let activeRoomPlayersRef = null;
         let activeRoomChatRef = null;
         let activeRoomReactionsRef = null;
+        let activeRoomConnectionRef = null;
+        let activeRoomConnectionHandler = null;
+        let activeRoomConnected = false;
+        let activeRoomIsHost = false;
+        let activeRoomPlayerRef = null;
+        let roomDirectorySnapshot = null;
+        let roomStaleTimers = {};
+        const ROOM_HOST_GRACE_MS = 10000;
 
         const hamuClientId = sessionStorage.getItem('hamugang_client_id') ||
             (crypto.randomUUID ? crypto.randomUUID() : 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2));
@@ -1674,9 +1683,18 @@
         }
 
         function renderLiveServersListFromSnapshot(snapshot) {
+            roomDirectorySnapshot = snapshot || null;
             const servers = [];
+            Object.keys(roomStaleTimers).forEach(clearRoomStaleTimer);
+            if (!snapshot) {
+                window.__hamuLiveServers = [];
+                renderLiveServersList();
+                return;
+            }
             snapshot.forEach(roomSnap => {
                 const room = roomSnap.val() || {};
+                if (!roomIsWithinHostGrace(room)) return;
+                scheduleRoomStaleRefresh(roomSnap.key, room);
                 const players = room.players ? Object.keys(room.players).length : 0;
                 servers.push({
                     code: roomSnap.key,
@@ -1684,10 +1702,12 @@
                     host: room.host || 'AnonymousHost',
                     password: room.passwordHash ? 'protected' : '',
                     time: formatRoomTime(room.createdAt),
-                    players
+                    players,
+                    _createdAt: Number(room.createdAt || 0),
+                    hostUid: room.hostUid || ''
                 });
             });
-            servers.sort((a, b) => (b._createdAt || 0) - (a._createdAt || 0));
+            servers.sort((a, b) => b._createdAt - a._createdAt);
             window.__hamuLiveServers = servers;
             renderLiveServersList();
         }
@@ -1996,15 +2016,58 @@
         }
 
         function saveLiveServersList(servers) {
-            // Kept for compatibility with the rest of the page.
-            // Room data is now written directly to Firebase, never localStorage.
             window.__hamuLiveServers = servers || [];
             renderLiveServersList();
         }
 
+        function getRoomHostUid(room) {
+            return room && String(room.hostUid || '');
+        }
+
+        function roomIsWithinHostGrace(room) {
+            if (!room) return false;
+            if (room.hostOnline !== false) return true;
+            const disconnectedAt = Number(room.hostDisconnectedAt || 0);
+            return !disconnectedAt || (Date.now() - disconnectedAt < ROOM_HOST_GRACE_MS);
+        }
+
+        function clearRoomStaleTimer(code) {
+            if (roomStaleTimers[code]) {
+                clearTimeout(roomStaleTimers[code]);
+                delete roomStaleTimers[code];
+            }
+        }
+
+        function scheduleRoomStaleRefresh(code, room) {
+            clearRoomStaleTimer(code);
+            if (!room || room.hostOnline !== false) return;
+            const disconnectedAt = Number(room.hostDisconnectedAt || 0);
+            const remaining = Math.max(100, ROOM_HOST_GRACE_MS - (Date.now() - disconnectedAt));
+            roomStaleTimers[code] = setTimeout(() => {
+                delete roomStaleTimers[code];
+                renderLiveServersListFromSnapshot(roomDirectorySnapshot);
+            }, remaining + 50);
+        }
+
         function cleanupInactiveOrFullServers() {
-            // Presence is maintained by Firebase onDisconnect().
-            // No client-side fake player counters are used.
+            // Firebase presence is authoritative. A disconnected host is kept for a
+            // 10-second grace period, then hidden from every client. Actual deletion
+            // of a room after a host has gone offline requires a server-side rule/function;
+            // index.html cannot execute code after the host's browser is gone.
+            if (roomDirectorySnapshot) renderLiveServersListFromSnapshot(roomDirectorySnapshot);
+        }
+
+        async function findUserHostedRoom() {
+            if (!firebaseRoomsRef || !firebaseAuthUser) return null;
+            const snap = await firebaseRoomsRef.once('value');
+            let found = null;
+            snap.forEach(child => {
+                const room = child.val() || {};
+                if (room.hostUid === firebaseAuthUser.uid && roomIsWithinHostGrace(room)) {
+                    found = { code: child.key, room };
+                }
+            });
+            return found;
         }
 
         async function generateUniqueRoomCode() {
@@ -2026,38 +2089,60 @@
             const hostName = currentUser ? currentUser.username : 'GuestPlayer';
 
             try {
-                // Firebase auth can briefly change during login/logout. Always use the
-                // freshest authenticated user before attempting a protected DB write.
                 const authUser = firebase.auth().currentUser || firebaseAuthUser;
-                if (!authUser) throw new Error('AUTH_NOT_READY');
+                if (!authUser || authUser.isAnonymous) throw new Error('LOGIN_REQUIRED');
                 firebaseAuthUser = authUser;
+
+                // One hosted room per Firebase account. Existing rooms that have been
+                // offline for more than the 10-second host grace are ignored.
+                const existing = await findUserHostedRoom();
+                if (existing) {
+                    showCustomAlert(
+                        'You Already Host a Server',
+                        `You can only create one live server at a time. Your current room is ${existing.code}. Delete that server first if you want to create another.`
+                    );
+                    document.getElementById('roomCodeText').innerText = `${existing.room.game || 'Game'} Room: ${existing.code}`;
+                    document.getElementById('roomCodeResultBox').style.display = 'block';
+                    return;
+                }
 
                 const randomCode = await generateUniqueRoomCode();
                 const roomRef = firebaseRoomsRef.child(randomCode);
-                const playerKey = firebaseAuthUser.uid + '_' + hamuClientId.replace(/[^a-zA-Z0-9_-]/g, '');
+                const playerKey = authUser.uid + '_' + hamuClientId.replace(/[^a-zA-Z0-9_-]/g, '');
                 const playerRef = roomRef.child('players').child(playerKey);
 
                 const roomData = {
                     game,
                     host: hostName,
                     hostUid: authUser.uid,
+                    hostOnline: true,
+                    hostDisconnectedAt: null,
                     createdAt: firebase.database.ServerValue.TIMESTAMP,
                     passwordHash: password ? await sha256(password) : null
                 };
 
                 await roomRef.set(roomData);
+                activeRoomIsHost = true;
+                activeRoomPlayerRef = playerRef;
 
-                // If the host disconnects, the entire room disappears from the live list.
-                // Failure to register onDisconnect must NOT make an otherwise valid room fail.
-                try { await roomRef.onDisconnect().remove(); }
-                catch (e) { console.warn('Host onDisconnect registration failed:', e); }
+                // Do not delete the room immediately on a temporary connection drop.
+                // Instead mark the host offline; every client gives the host 10 seconds
+                // to reconnect before removing it from the live directory.
+                try {
+                    await roomRef.onDisconnect().update({
+                        hostOnline: false,
+                        hostDisconnectedAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                } catch (e) {
+                    console.warn('Host onDisconnect registration failed:', e);
+                }
 
                 await playerRef.set({
                     username: hostName,
                     uid: authUser.uid,
                     joinedAt: firebase.database.ServerValue.TIMESTAMP
                 });
-                playerRef.onDisconnect().remove();
+                try { await playerRef.onDisconnect().remove(); } catch (e) { console.warn('Player onDisconnect failed:', e); }
 
                 await attachToActiveRoom(randomCode, game, true);
 
@@ -2067,22 +2152,53 @@
 
                 showCustomAlert(
                     'Room Created Successfully!',
-                    `Online room ${randomCode} is live. Share this code with players on any device/browser.`
+                    `Online room ${randomCode} is live. You can keep only one hosted server at a time.`
                 );
             } catch (err) {
                 console.error('Create room failed:', err);
                 const code = err?.code || '';
                 const message = err?.message || String(err);
-                if (code === 'PERMISSION_DENIED' || /permission_denied/i.test(message)) {
-                    showCustomAlert(
-                        'Firebase Database Permission Denied',
-                        'Your Firebase Authentication is working, but the Realtime Database rules currently reject room creation. Open Firebase Console → Realtime Database → Rules, paste the database.rules.json included with this project, and click Publish. Then refresh this site and try again.'
-                    );
-                } else if (err?.message === 'AUTH_NOT_READY') {
-                    showCustomAlert('Authentication Still Loading', 'Please wait a moment for Firebase login to finish, then create the room again.');
+                if (message === 'LOGIN_REQUIRED') {
+                    showCustomAlert('Login Required', 'Please login with your HAMUGANG account before creating a live server.');
+                } else if (code === 'PERMISSION_DENIED' || /permission_denied/i.test(message)) {
+                    showCustomAlert('Firebase Database Permission Denied', 'Your Firebase Realtime Database Rules are rejecting this room operation.');
                 } else {
                     showCustomAlert('Room Creation Failed', `${message}${code ? ` [${code}]` : ''}`);
                 }
+            }
+        }
+
+        async function deleteHostedRoom(roomCode = null) {
+            if (!requireAuthenticatedRealtime()) return;
+            const code = String(roomCode || currentActiveRoomCode || '').trim().toUpperCase();
+            if (!/^HAMU-\d{4}$/.test(code)) {
+                showCustomAlert('No Hosted Server', 'You do not currently have a valid hosted room to delete.');
+                return;
+            }
+            try {
+                const ref = firebaseRoomsRef.child(code);
+                const snap = await ref.once('value');
+                if (!snap.exists()) {
+                    if (currentActiveRoomCode === code) await leaveCurrentRoom();
+                    document.getElementById('roomCodeResultBox').style.display = 'none';
+                    return;
+                }
+                if (snap.child('hostUid').val() !== firebaseAuthUser.uid) {
+                    showCustomAlert('Not Allowed', 'Only the room host can delete this server.');
+                    return;
+                }
+                await ref.remove();
+                if (currentActiveRoomCode === code) {
+                    detachActiveRoomListeners();
+                    currentActiveRoomCode = 'SOLO';
+                    activeRoomIsHost = false;
+                    activeRoomPlayerRef = null;
+                }
+                document.getElementById('roomCodeResultBox').style.display = 'none';
+                showCustomAlert('Server Deleted', `Room ${code} has been deleted successfully.`);
+            } catch (err) {
+                console.error('Delete room failed:', err);
+                showCustomAlert('Delete Failed', err?.message || 'Could not delete your server.');
             }
         }
 
@@ -2102,15 +2218,15 @@
         }
 
         async function attachToActiveRoom(roomCode, gameName, isHost = false) {
-            // Remove old listeners first.
             detachActiveRoomListeners();
 
             currentActiveRoomCode = roomCode;
             currentRatingGame = gameName;
+            activeRoomIsHost = !!isHost;
 
             const roomRef = firebaseRoomsRef.child(roomCode);
             const playerKey = firebaseAuthUser.uid + '_' + hamuClientId.replace(/[^a-zA-Z0-9_-]/g, '');
-                const playerRef = roomRef.child('players').child(playerKey);
+            const playerRef = roomRef.child('players').child(playerKey);
             const chatRef = roomRef.child('chat');
             const reactionsRef = roomRef.child('reactions');
 
@@ -2118,18 +2234,40 @@
             activeRoomPlayersRef = roomRef.child('players');
             activeRoomChatRef = chatRef;
             activeRoomReactionsRef = reactionsRef;
+            activeRoomPlayerRef = playerRef;
 
             const currentUser = getActiveUserObj();
             const username = currentUser ? currentUser.username : 'GuestPlayer';
 
-            if (!isHost) {
-                await playerRef.set({
-                    username,
-                    uid: firebaseAuthUser.uid,
-                    joinedAt: firebase.database.ServerValue.TIMESTAMP
-                });
-            }
-            playerRef.onDisconnect().remove();
+            const restorePresence = async () => {
+                try {
+                    await playerRef.set({
+                        username,
+                        uid: firebaseAuthUser.uid,
+                        joinedAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    try { await playerRef.onDisconnect().remove(); } catch (e) { console.warn('Player disconnect hook:', e); }
+                    if (activeRoomIsHost) {
+                        await roomRef.update({ hostOnline: true, hostDisconnectedAt: null });
+                        try {
+                            await roomRef.onDisconnect().update({
+                                hostOnline: false,
+                                hostDisconnectedAt: firebase.database.ServerValue.TIMESTAMP
+                            });
+                        } catch (e) { console.warn('Host disconnect hook:', e); }
+                    }
+                } catch (e) {
+                    console.warn('Presence restore failed:', e);
+                }
+            };
+
+            activeRoomConnectionRef = firebase.database().ref('.info/connected');
+            activeRoomConnectionHandler = connectedSnap => {
+                activeRoomConnected = connectedSnap.val() === true;
+                if (activeRoomConnected) restorePresence();
+            };
+            activeRoomConnectionRef.on('value', activeRoomConnectionHandler);
+            await restorePresence();
 
             activeRoomPlayersRef.on('value', snapshot => {
                 updateActiveRoomPlayerCount(snapshot.numChildren());
@@ -2155,35 +2293,37 @@
             if (activeRoomPlayersRef) activeRoomPlayersRef.off();
             if (activeRoomChatRef) activeRoomChatRef.off();
             if (activeRoomReactionsRef) activeRoomReactionsRef.off();
+            if (activeRoomConnectionRef && activeRoomConnectionHandler) {
+                activeRoomConnectionRef.off('value', activeRoomConnectionHandler);
+            }
+            activeRoomConnectionRef = null;
+            activeRoomConnectionHandler = null;
+            activeRoomConnected = false;
             activeRoomPlayersRef = null;
             activeRoomChatRef = null;
             activeRoomReactionsRef = null;
+            activeRoomPlayerRef = null;
             activeRoomRef = null;
+            activeRoomIsHost = false;
         }
 
         async function leaveCurrentRoom() {
-            if (!firebaseReady || !currentActiveRoomCode || currentActiveRoomCode === 'SOLO') {
-                return;
-            }
+            if (!firebaseReady || !currentActiveRoomCode || currentActiveRoomCode === 'SOLO') return;
 
             const roomCode = currentActiveRoomCode;
             const roomRef = firebaseRoomsRef.child(roomCode);
-            const playerKey = firebaseAuthUser.uid + '_' + hamuClientId.replace(/[^a-zA-Z0-9_-]/g, '');
-                const playerRef = roomRef.child('players').child(playerKey);
+            const playerRef = activeRoomPlayerRef || roomRef.child('players').child(firebaseAuthUser.uid + '_' + hamuClientId.replace(/[^a-zA-Z0-9_-]/g, ''));
+            const wasHost = activeRoomIsHost;
 
             try {
                 await playerRef.remove();
-
-                // Host owns the room lifecycle. Closing/leaving the host ends the room.
-                const snap = await roomRef.once('value');
-                if (snap.exists() && snap.child('hostUid').val() === firebaseAuthUser.uid) {
-                    await roomRef.remove();
-                }
+                if (wasHost) await roomRef.remove();
             } catch (err) {
                 console.warn('Leave room cleanup failed:', err);
             } finally {
                 detachActiveRoomListeners();
                 currentActiveRoomCode = 'SOLO';
+                if (wasHost) document.getElementById('roomCodeResultBox').style.display = 'none';
             }
         }
 
@@ -2283,12 +2423,9 @@
                         <td style="color:var(--text-muted);">${escapeHTML(s.time)}</td>
                         <td>${hasPass ? '<span style="color:var(--error-color);">🔒 Locked</span>' : '<span style="color:var(--success-color);">🌐 Public</span>'}</td>
                         <td style="text-align:right;">
-                            <button class="btn ${isFull ? 'btn-outline' : 'btn-primary'}"
-                                style="padding:4px 12px;font-size:12px;"
-                                ${isFull ? 'disabled' : ''}
-                                onclick="attemptJoinServer('${escapeHTML(s.code)}')">
-                                ${isFull ? 'Room Full ❌' : 'Join Live 🚀'}
-                            </button>
+                            ${s.hostUid && firebaseAuthUser && s.hostUid === firebaseAuthUser.uid ?
+                                `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px;border-color:var(--error-color);color:var(--error-color);" onclick="deleteHostedRoom('${escapeHTML(s.code)}')">Delete 🗑️</button>` :
+                                `<button class="btn ${isFull ? 'btn-outline' : 'btn-primary'}" style="padding:4px 12px;font-size:12px;" ${isFull ? 'disabled' : ''} onclick="attemptJoinServer('${escapeHTML(s.code)}')">${isFull ? 'Room Full ❌' : 'Join Live 🚀'}</button>`}
                         </td>
                     </tr>`;
             });
@@ -2339,6 +2476,10 @@
 
             if (!firebaseReady || currentActiveRoomCode === 'SOLO' || !activeRoomChatRef) {
                 showCustomAlert('Join a Room First', 'Open a live multiplayer room before sending room chat.');
+                return;
+            }
+            if (!activeRoomConnected) {
+                showCustomAlert('Reconnecting…', 'Your connection to the room was briefly lost. Please wait a moment and send again.');
                 return;
             }
 
