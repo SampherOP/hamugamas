@@ -1250,7 +1250,7 @@
                 <!-- LIVE SERVERS LIST -->
                 <div class="dash-card" style="padding: 0; overflow: hidden; margin-top: 10px;">
                     <div style="padding: 15px 20px; border-bottom: 1px solid var(--border-color); font-weight: 700; display: flex; justify-content: space-between; align-items: center;">
-                        <span><i class="fa-solid fa-signal" style="color: var(--success-color);"></i> Live Active Servers (Clean Feed - Auto Syncing)</span>
+                        <span><i class="fa-solid fa-signal" style="color: var(--success-color);"></i> Live Active Servers (REAL ONLINE SYNC)</span>
                     </div>
                     <table class="live-servers-table">
                         <thead>
@@ -1482,25 +1482,145 @@
         </div>
     </div>
 
+    <!-- HAMUGANG REALTIME MULTIPLAYER: Firebase Realtime Database + Anonymous Auth -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+
     <script>
         let isLoginMode = true;
         let currentRatingGame = "";
         let currentActiveRoomCode = "SOLO"; 
         let isTouchPadActive = false;
 
-        // Heavy Cross-browser & Cross-tab synchronization channel
-        const serverBroadcastChannel = new BroadcastChannel('hamugang_server_sync_channel');
-        serverBroadcastChannel.onmessage = (event) => {
-            if (event.data && event.data.type === 'UPDATE_SERVERS') {
-                renderLiveServersList();
-            }
+        // ============================================================
+        // HAMUGANG REAL CROSS-DEVICE MULTIPLAYER
+        // Firebase Realtime Database is the shared online source of truth.
+        // Paste the Web App config from your Firebase project below.
+        // ============================================================
+        const HAMUGANG_FIREBASE_CONFIG = {
+            apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
+            authDomain: "PASTE_YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://PASTE_YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+            projectId: "PASTE_YOUR_PROJECT_ID",
+            storageBucket: "PASTE_YOUR_PROJECT_ID.firebasestorage.app",
+            messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID",
+            appId: "PASTE_YOUR_FIREBASE_APP_ID"
         };
 
-        // Window storage listener for instant multi-tab sync
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'hamugang_live_servers') {
+        let firebaseReady = false;
+        let firebaseAuthUser = null;
+        let firebaseRoomsRef = null;
+        let activeRoomRef = null;
+        let activeRoomPlayersRef = null;
+        let activeRoomChatRef = null;
+        let activeRoomReactionsRef = null;
+
+        const hamuClientId = sessionStorage.getItem('hamugang_client_id') ||
+            (crypto.randomUUID ? crypto.randomUUID() : 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+        sessionStorage.setItem('hamugang_client_id', hamuClientId);
+
+        function isFirebaseConfigured() {
+            return HAMUGANG_FIREBASE_CONFIG.apiKey &&
+                !HAMUGANG_FIREBASE_CONFIG.apiKey.startsWith('PASTE_') &&
+                HAMUGANG_FIREBASE_CONFIG.projectId &&
+                !HAMUGANG_FIREBASE_CONFIG.projectId.startsWith('PASTE_') &&
+                HAMUGANG_FIREBASE_CONFIG.databaseURL &&
+                !HAMUGANG_FIREBASE_CONFIG.databaseURL.includes('PASTE_YOUR_PROJECT_ID');
+        }
+
+        async function initRealtimeMultiplayer() {
+            if (!isFirebaseConfigured()) {
+                console.warn('HAMUGANG Firebase is not configured yet.');
                 renderLiveServersList();
+                return;
             }
+
+            try {
+                if (!firebase.apps.length) firebase.initializeApp(HAMUGANG_FIREBASE_CONFIG);
+
+                firebaseAuthUser = firebase.auth().currentUser;
+                if (!firebaseAuthUser) {
+                    const result = await firebase.auth().signInAnonymously();
+                    firebaseAuthUser = result.user;
+                }
+
+                firebaseRoomsRef = firebase.database().ref('rooms');
+                firebaseReady = true;
+
+                // Live room directory: every connected browser/device receives changes.
+                firebaseRoomsRef.on('value', snapshot => {
+                    renderLiveServersListFromSnapshot(snapshot);
+                });
+
+                renderLiveServersList();
+            } catch (err) {
+                console.error('HAMUGANG realtime initialization failed:', err);
+                firebaseReady = false;
+                showCustomAlert(
+                    'Multiplayer Connection Error',
+                    'Could not connect to the online multiplayer service. Check your Firebase configuration and Realtime Database rules.'
+                );
+            }
+        }
+
+        function requireRealtime() {
+            if (!firebaseReady) {
+                showCustomAlert(
+                    'Online Multiplayer Not Configured',
+                    'Open this HTML file and add your Firebase Web App configuration first. The room system needs a real online database to work across devices/browsers.'
+                );
+                return false;
+            }
+            return true;
+        }
+
+        function escapeHTML(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;'
+            }[ch]));
+        }
+
+        async function sha256(textValue) {
+            const data = new TextEncoder().encode(textValue);
+            const hash = await crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function formatRoomTime(timestamp) {
+            if (!timestamp) return 'Just now';
+            return new Date(Number(timestamp)).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function renderLiveServersListFromSnapshot(snapshot) {
+            const servers = [];
+            snapshot.forEach(roomSnap => {
+                const room = roomSnap.val() || {};
+                const players = room.players ? Object.keys(room.players).length : 0;
+                servers.push({
+                    code: roomSnap.key,
+                    game: room.game || 'Unknown Game',
+                    host: room.host || 'AnonymousHost',
+                    password: room.passwordHash ? 'protected' : '',
+                    time: formatRoomTime(room.createdAt),
+                    players
+                });
+            });
+            servers.sort((a, b) => (b._createdAt || 0) - (a._createdAt || 0));
+            window.__hamuLiveServers = servers;
+            renderLiveServersList();
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            checkUserSession();
+            loadUniversalProgress();
+            renderAllGameGrids();
+            updateStreakUI();
+            renderLiveServersList();
+            initRealtimeMultiplayer();
         });
 
         const allGames = [
@@ -1599,6 +1719,9 @@
         }
 
         function switchView(viewName) {
+            if (currentActiveRoomCode !== 'SOLO' && viewName !== 'multiplayer') {
+                leaveCurrentRoom().catch(console.warn);
+            }
             document.getElementById('gamePlayView').style.display = 'none';
             document.getElementById('gameIframe').src = "";
             document.getElementById('touchControlsOverlay').classList.remove('active');
@@ -1735,182 +1858,344 @@
             tbody.innerHTML = html;
         }
 
+        // ---------- REAL ONLINE ROOM DIRECTORY / PRESENCE ----------
         function getLiveServersList() {
-            let servers = JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
-            return servers;
+            return Array.isArray(window.__hamuLiveServers) ? window.__hamuLiveServers : [];
         }
 
         function saveLiveServersList(servers) {
-            localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
-            try {
-                serverBroadcastChannel.postMessage({ type: 'UPDATE_SERVERS' });
-            } catch(e) {}
+            // Kept for compatibility with the rest of the page.
+            // Room data is now written directly to Firebase, never localStorage.
+            window.__hamuLiveServers = servers || [];
+            renderLiveServersList();
         }
 
         function cleanupInactiveOrFullServers() {
-            let servers = getLiveServersList();
-            let initialCount = servers.length;
-            
-            servers = servers.filter(s => {
-                if (typeof s.players === 'number' && s.players <= 0) return false;
-                return true;
-            });
-
-            if (servers.length !== initialCount) {
-                saveLiveServersList(servers);
-            }
+            // Presence is maintained by Firebase onDisconnect().
+            // No client-side fake player counters are used.
         }
 
-        function generateRoomCode() {
+        async function generateUniqueRoomCode() {
+            if (!requireRealtime()) return null;
+            for (let i = 0; i < 12; i++) {
+                const code = 'HAMU-' + Math.floor(1000 + Math.random() * 9000);
+                const snap = await firebaseRoomsRef.child(code).once('value');
+                if (!snap.exists()) return code;
+            }
+            throw new Error('Could not generate a unique room code. Please try again.');
+        }
+
+        async function generateRoomCode() {
+            if (!requireRealtime()) return;
+
             const game = document.getElementById('mpGameSelect').value;
             const password = document.getElementById('mpRoomPassword').value.trim();
-            const randomCode = "HAMU-" + Math.floor(1000 + Math.random() * 9000);
             const currentUser = getActiveUserObj();
-            const hostName = currentUser ? currentUser.username : "AnonymousHost";
-            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const hostName = currentUser ? currentUser.username : 'GuestPlayer';
 
-            let servers = getLiveServersList();
-            let newServer = {
-                code: randomCode,
-                game: game,
-                host: hostName,
-                password: password,
-                time: timeStr,
-                players: 1
-            };
+            try {
+                const randomCode = await generateUniqueRoomCode();
+                const roomRef = firebaseRoomsRef.child(randomCode);
+                const playerRef = roomRef.child('players').child(hamuClientId);
 
-            servers.unshift(newServer);
-            saveLiveServersList(servers);
+                const roomData = {
+                    game,
+                    host: hostName,
+                    hostUid: firebaseAuthUser.uid,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP,
+                    passwordHash: password ? await sha256(password) : null
+                };
 
-            document.getElementById('roomCodeText').innerText = `${game} Room: ${randomCode} ${password ? '[🔒 Locked]' : '[🌐 Public]'}`;
-            document.getElementById('roomCodeResultBox').style.display = 'block';
-            renderLiveServersList();
-            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) is now live at the top!`);
-        }
+                await roomRef.set(roomData);
 
-        function joinGeneratedRoomNow() {
-            let codeTxt = document.getElementById('roomCodeText').innerText;
-            let servers = getLiveServersList();
-            let found = servers.find(s => codeTxt.includes(s.code));
-            if (found) {
-                attemptJoinServer(found.code);
+                // If the host disconnects, the entire room disappears from the live list.
+                roomRef.onDisconnect().remove();
+
+                await playerRef.set({
+                    username: hostName,
+                    uid: firebaseAuthUser.uid,
+                    joinedAt: firebase.database.ServerValue.TIMESTAMP
+                });
+                playerRef.onDisconnect().remove();
+
+                await attachToActiveRoom(randomCode, game, true);
+
+                document.getElementById('roomCodeText').innerText =
+                    `${game} Room: ${randomCode} ${password ? '[🔒 Locked]' : '[🌐 Public]'}`;
+                document.getElementById('roomCodeResultBox').style.display = 'block';
+
+                showCustomAlert(
+                    'Room Created Successfully!',
+                    `Online room ${randomCode} is live. Share this code with players on any device/browser.`
+                );
+            } catch (err) {
+                console.error('Create room failed:', err);
+                showCustomAlert('Room Creation Failed', 'The online room could not be created. Please try again.');
             }
         }
 
-        function joinCustomRoomCode() {
+        async function joinGeneratedRoomNow() {
+            const codeTxt = document.getElementById('roomCodeText').innerText;
+            const match = codeTxt.match(/HAMU-\d{4}/i);
+            if (match) await attemptJoinServer(match[0]);
+        }
+
+        async function joinCustomRoomCode() {
             const codeInput = document.getElementById('customRoomInput').value.trim().toUpperCase();
             if (!codeInput) {
-                showCustomAlert("Room Code Error", "Please enter a valid room code.");
+                showCustomAlert('Room Code Error', 'Please enter a valid room code.');
                 return;
             }
-            attemptJoinServer(codeInput);
+            await attemptJoinServer(codeInput);
         }
 
-        function attemptJoinServer(roomCode) {
-            let servers = getLiveServersList();
-            let serverIndex = servers.findIndex(s => s.code.toUpperCase() === roomCode.toUpperCase());
+        async function attachToActiveRoom(roomCode, gameName, isHost = false) {
+            // Remove old listeners first.
+            detachActiveRoomListeners();
 
-            if (serverIndex === -1) {
-                let gameObj = allGames[0];
-                launchGame(gameObj.name, gameObj.url, roomCode);
+            currentActiveRoomCode = roomCode;
+            currentRatingGame = gameName;
+
+            const roomRef = firebaseRoomsRef.child(roomCode);
+            const playerRef = roomRef.child('players').child(hamuClientId);
+            const chatRef = roomRef.child('chat');
+            const reactionsRef = roomRef.child('reactions');
+
+            activeRoomRef = roomRef;
+            activeRoomPlayersRef = roomRef.child('players');
+            activeRoomChatRef = chatRef;
+            activeRoomReactionsRef = reactionsRef;
+
+            const currentUser = getActiveUserObj();
+            const username = currentUser ? currentUser.username : 'GuestPlayer';
+
+            if (!isHost) {
+                await playerRef.set({
+                    username,
+                    uid: firebaseAuthUser.uid,
+                    joinedAt: firebase.database.ServerValue.TIMESTAMP
+                });
+            }
+            playerRef.onDisconnect().remove();
+
+            activeRoomPlayersRef.on('value', snapshot => {
+                updateActiveRoomPlayerCount(snapshot.numChildren());
+                renderLiveServersList();
+            });
+
+            activeRoomChatRef.on('value', snapshot => {
+                const messages = [];
+                snapshot.forEach(msgSnap => messages.push(msgSnap.val()));
+                messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                renderRealtimeChat(messages);
+            });
+
+            activeRoomReactionsRef.on('value', snapshot => {
+                renderRealtimeReactions(snapshot.val() || {});
+            });
+
+            loadGameChat(gameName, roomCode);
+            loadGameReactions(gameName);
+        }
+
+        function detachActiveRoomListeners() {
+            if (activeRoomPlayersRef) activeRoomPlayersRef.off();
+            if (activeRoomChatRef) activeRoomChatRef.off();
+            if (activeRoomReactionsRef) activeRoomReactionsRef.off();
+            activeRoomPlayersRef = null;
+            activeRoomChatRef = null;
+            activeRoomReactionsRef = null;
+            activeRoomRef = null;
+        }
+
+        async function leaveCurrentRoom() {
+            if (!firebaseReady || !currentActiveRoomCode || currentActiveRoomCode === 'SOLO') {
                 return;
             }
 
-            let server = servers[serverIndex];
+            const roomCode = currentActiveRoomCode;
+            const roomRef = firebaseRoomsRef.child(roomCode);
+            const playerRef = roomRef.child('players').child(hamuClientId);
 
-            if (server.players >= 10) {
-                showCustomAlert("Room Full (10/10)", "❌ This room has reached its maximum capacity of 10 players! No more players can join until someone leaves.");
+            try {
+                await playerRef.remove();
+
+                // Host owns the room lifecycle. Closing/leaving the host ends the room.
+                const snap = await roomRef.once('value');
+                if (snap.exists() && snap.child('hostUid').val() === firebaseAuthUser.uid) {
+                    await roomRef.remove();
+                }
+            } catch (err) {
+                console.warn('Leave room cleanup failed:', err);
+            } finally {
+                detachActiveRoomListeners();
+                currentActiveRoomCode = 'SOLO';
+            }
+        }
+
+        async function attemptJoinServer(roomCode) {
+            if (!requireRealtime()) return;
+
+            roomCode = String(roomCode || '').trim().toUpperCase();
+            if (!/^HAMU-\d{4}$/.test(roomCode)) {
+                showCustomAlert('Invalid Room Code', 'Room codes use the format HAMU-1234.');
                 return;
             }
 
-            if (server.password && server.password.length > 0) {
-                let enteredPass = prompt(`🔒 This room (${server.code}) is password protected! Enter room password:`);
-                if (enteredPass === null) return;
-                if (enteredPass !== server.password) {
-                    showCustomAlert("Access Denied", "❌ Incorrect Room Password! You cannot join this room.");
+            try {
+                const roomSnap = await firebaseRoomsRef.child(roomCode).once('value');
+                if (!roomSnap.exists()) {
+                    showCustomAlert('Room Not Found', `No live online room named ${roomCode} exists right now.`);
                     return;
                 }
+
+                const room = roomSnap.val();
+                const playersSnap = roomSnap.child('players');
+                const playerCount = playersSnap.exists() ? playersSnap.numChildren() : 0;
+
+                // If the same browser refreshes/rejoins, don't count its own existing presence twice.
+                const alreadyInside = playersSnap.child(hamuClientId).exists();
+                const effectiveCount = alreadyInside ? playerCount : playerCount + 1;
+
+                if (effectiveCount > 10) {
+                    showCustomAlert('Room Full (10/10)', 'This room has reached its maximum capacity of 10 players.');
+                    return;
+                }
+
+                if (room.passwordHash) {
+                    const enteredPass = prompt(`🔒 Room ${roomCode} is password protected. Enter room password:`);
+                    if (enteredPass === null) return;
+
+                    const enteredHash = await sha256(enteredPass);
+                    if (enteredHash !== room.passwordHash) {
+                        showCustomAlert('Access Denied', 'Incorrect room password.');
+                        return;
+                    }
+                }
+
+                await attachToActiveRoom(roomCode, room.game, false);
+
+                const gameObj = allGames.find(g => g.name === room.game) || allGames[0];
+                showCustomAlert(
+                    'Connected!',
+                    `🚀 Joined ${room.host}'s online room for ${room.game}! (${effectiveCount}/10 players)`
+                );
+                launchGame(gameObj.name, gameObj.url, roomCode);
+            } catch (err) {
+                console.error('Join room failed:', err);
+                showCustomAlert('Join Failed', 'Could not join the online room. Please try again.');
             }
-
-            server.players = (server.players || 1) + 1;
-            saveLiveServersList(servers);
-
-            let gameObj = allGames.find(g => g.name === server.game) || allGames[0];
-            showCustomAlert("Connected!", `🚀 Successfully joined ${server.host}'s live server for ${server.game}! (${server.players}/10 players)`);
-            launchGame(gameObj.name, gameObj.url, server.code);
         }
 
         function renderLiveServersList() {
-            let servers = getLiveServersList();
-            let tbody = document.getElementById('liveServersTableBody');
-            if(!tbody) return;
+            const tbody = document.getElementById('liveServersTableBody');
+            const servers = getLiveServersList();
+
+            if (!tbody) return;
+
+            if (!firebaseReady && !isFirebaseConfigured()) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">
+                    Online multiplayer is not configured yet. Add your Firebase Web App config in the HTML.
+                </td></tr>`;
+                return;
+            }
 
             if (servers.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 25px; color: var(--text-muted);">No active rooms right now. Create one above!</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:25px;color:var(--text-muted);">
+                    ${firebaseReady ? 'No active online rooms right now. Create one above!' : 'Connecting to online multiplayer...'}
+                </td></tr>`;
                 return;
             }
 
             let html = '';
             servers.forEach(s => {
-                let hasPass = s.password && s.password.length > 0;
-                let currentPlayers = s.players || 1;
-                let isFull = currentPlayers >= 10;
+                const hasPass = !!s.password;
+                const currentPlayers = Number(s.players || 0);
+                const isFull = currentPlayers >= 10;
 
                 html += `
                     <tr>
-                        <td style="font-weight: 600;"><i class="fa-solid fa-gamepad" style="color: var(--accent-hover); margin-right: 5px;"></i>${s.game}</td>
-                        <td>${s.host}</td>
-                        <td style="font-family: monospace; font-weight: bold; color: #ffd700;">${s.code}</td>
-                        <td><span style="font-weight: bold; color: ${isFull ? 'var(--error-color)' : 'var(--success-color)'};">${currentPlayers}/10</span></td>
-                        <td style="color: var(--text-muted);">${s.time}</td>
-                        <td>${hasPass ? '<span style="color: var(--error-color);">🔒 Locked</span>' : '<span style="color: var(--success-color);">🌐 Public</span>'}</td>
-                        <td style="text-align: right;">
-                            <button class="btn ${isFull ? 'btn-outline' : 'btn-primary'}" style="padding: 4px 12px; font-size: 12px;" ${isFull ? 'disabled' : ''} onclick="attemptJoinServer('${s.code}')">${isFull ? 'Room Full ❌' : 'Join Live 🚀'}</button>
+                        <td style="font-weight:600;"><i class="fa-solid fa-gamepad" style="color:var(--accent-hover);margin-right:5px;"></i>${escapeHTML(s.game)}</td>
+                        <td>${escapeHTML(s.host)}</td>
+                        <td style="font-family:monospace;font-weight:bold;color:#ffd700;">${escapeHTML(s.code)}</td>
+                        <td><span style="font-weight:bold;color:${isFull ? 'var(--error-color)' : 'var(--success-color)'};">${currentPlayers}/10</span></td>
+                        <td style="color:var(--text-muted);">${escapeHTML(s.time)}</td>
+                        <td>${hasPass ? '<span style="color:var(--error-color);">🔒 Locked</span>' : '<span style="color:var(--success-color);">🌐 Public</span>'}</td>
+                        <td style="text-align:right;">
+                            <button class="btn ${isFull ? 'btn-outline' : 'btn-primary'}"
+                                style="padding:4px 12px;font-size:12px;"
+                                ${isFull ? 'disabled' : ''}
+                                onclick="attemptJoinServer('${escapeHTML(s.code)}')">
+                                ${isFull ? 'Room Full ❌' : 'Join Live 🚀'}
+                            </button>
                         </td>
-                    </tr>
-                `;
+                    </tr>`;
             });
             tbody.innerHTML = html;
         }
 
-        function getGameChatKey(gameName, roomCode) {
-            return 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase() + '_' + (roomCode || 'solo').toLowerCase();
+        function updateActiveRoomPlayerCount(count) {
+            const label = document.getElementById('chatRoomStatusLabel');
+            if (label && currentActiveRoomCode !== 'SOLO') {
+                label.innerText = `Live Room Chat (${currentActiveRoomCode}) • ${count}/10 players`;
+            }
         }
 
-        function loadGameChat(gameName, roomCode) {
-            let chatBox = document.getElementById('gameChatBox');
-            let statusLabel = document.getElementById('chatRoomStatusLabel');
-            statusLabel.innerText = `Live Room Chat (${roomCode || 'SOLO'} Mode)`;
+        function renderRealtimeChat(messages) {
+            const chatBox = document.getElementById('gameChatBox');
+            if (!chatBox) return;
 
-            let key = getGameChatKey(gameName, roomCode);
-            let messages = JSON.parse(localStorage.getItem(key)) || [
-                { user: "System", text: `Welcome to room [${roomCode || 'SOLO'}] chat! Type your messages below.` }
-            ];
-
-            let html = '';
-            messages.forEach(m => {
-                html += `<div class="chat-msg-item"><span class="chat-msg-user">${m.user}:</span>${m.text}</div>`;
-            });
-            chatBox.innerHTML = html;
+            if (!messages.length) {
+                chatBox.innerHTML = `<div class="chat-msg-item"><span class="chat-msg-user">System:</span>Welcome to room [${escapeHTML(currentActiveRoomCode)}] chat!</div>`;
+            } else {
+                chatBox.innerHTML = messages.slice(-50).map(m =>
+                    `<div class="chat-msg-item"><span class="chat-msg-user">${escapeHTML(m.user)}:</span>${escapeHTML(m.text)}</div>`
+                ).join('');
+            }
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        function sendGameChatMsg() {
+        function getGameChatKey(gameName, roomCode) {
+            return `rooms/${roomCode || 'solo'}/chat`;
+        }
+
+        function loadGameChat(gameName, roomCode) {
+            const statusLabel = document.getElementById('chatRoomStatusLabel');
+            if (statusLabel) statusLabel.innerText = `Live Room Chat (${roomCode || 'SOLO'} Mode)`;
+
+            if (roomCode === 'SOLO' || !firebaseReady || !activeRoomChatRef) {
+                const chatBox = document.getElementById('gameChatBox');
+                if (chatBox) {
+                    chatBox.innerHTML = `<div class="chat-msg-item"><span class="chat-msg-user">System:</span>Online room chat becomes active when you join a live room.</div>`;
+                }
+            }
+        }
+
+        async function sendGameChatMsg() {
             const input = document.getElementById('chatMessageInput');
             const text = input.value.trim();
             if (!text) return;
 
+            if (!firebaseReady || currentActiveRoomCode === 'SOLO' || !activeRoomChatRef) {
+                showCustomAlert('Join a Room First', 'Open a live multiplayer room before sending room chat.');
+                return;
+            }
+
             const currentUser = getActiveUserObj();
-            const username = currentUser ? currentUser.username : "GuestPlayer";
+            const username = currentUser ? currentUser.username : 'GuestPlayer';
 
-            let key = getGameChatKey(currentRatingGame, currentActiveRoomCode);
-            let messages = JSON.parse(localStorage.getItem(key)) || [];
-            messages.push({ user: username, text: text });
-            if (messages.length > 50) messages.shift();
-
-            localStorage.setItem(key, JSON.stringify(messages));
-            input.value = '';
-            loadGameChat(currentRatingGame, currentActiveRoomCode);
+            try {
+                await activeRoomChatRef.push({
+                    user: username,
+                    uid: firebaseAuthUser.uid,
+                    text: text.slice(0, 300),
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                });
+                input.value = '';
+            } catch (err) {
+                console.error('Chat send failed:', err);
+                showCustomAlert('Chat Error', 'Your message could not be sent.');
+            }
         }
 
         function switchGameSidebarTab(tabName, btnElement) {
@@ -1972,40 +2257,59 @@
             return 'hamugang_ratings_' + gameName.replace(/\s+/g, '_').toLowerCase();
         }
 
+        function renderRealtimeReactions(data) {
+            const defaults = { fire: 0, star: 0, skull: 0, poop: 0 };
+            const merged = { ...defaults, ...(data || {}) };
+            document.getElementById('count-fire').innerText = merged.fire || 0;
+            document.getElementById('count-star').innerText = merged.star || 0;
+            document.getElementById('count-skull').innerText = merged.skull || 0;
+            document.getElementById('count-poop').innerText = merged.poop || 0;
+        }
+
         function loadGameReactions(gameName) {
+            if (firebaseReady && currentActiveRoomCode !== 'SOLO' && activeRoomReactionsRef) {
+                activeRoomReactionsRef.once('value').then(s => renderRealtimeReactions(s.val() || {}));
+                return;
+            }
+
             let data = JSON.parse(localStorage.getItem(getGameReactionsKey(gameName))) || { fire: 12, star: 8, skull: 3, poop: 1 };
-            document.getElementById('count-fire').innerText = data.fire;
-            document.getElementById('count-star').innerText = data.star;
-            document.getElementById('count-skull').innerText = data.skull;
-            document.getElementById('count-poop').innerText = data.poop;
+            renderRealtimeReactions(data);
 
             let ratings = JSON.parse(localStorage.getItem(getGameRatingsKey(gameName))) || [4.8];
             let avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
             document.getElementById('starRatingText').innerText = `Average Rating: ${avg.toFixed(1)} / 5.0 ⭐ (${ratings.length} votes)`;
         }
 
-        function sendEmojiReaction(emojiType) {
+        async function sendEmojiReaction(emojiType) {
             if (!currentRatingGame) return;
+
+            const keyMap = { '🔥': 'fire', '🤩': 'star', '💀': 'skull', '💩': 'poop' };
+            const field = keyMap[emojiType];
+            if (!field) return;
+
+            if (firebaseReady && currentActiveRoomCode !== 'SOLO' && activeRoomReactionsRef) {
+                const fieldRef = activeRoomReactionsRef.child(field);
+                await fieldRef.transaction(current => (Number(current) || 0) + 1);
+                return;
+            }
+
             let key = getGameReactionsKey(currentRatingGame);
             let data = JSON.parse(localStorage.getItem(key)) || { fire: 12, star: 8, skull: 3, poop: 1 };
-
-            if (emojiType === '🔥') data.fire++;
-            if (emojiType === '🤩') data.star++;
-            if (emojiType === '💀') data.skull++;
-            if (emojiType === '💩') data.poop++;
-
+            data[field]++;
             localStorage.setItem(key, JSON.stringify(data));
             loadGameReactions(currentRatingGame);
         }
 
-        function rateGameStars(starsCount) {
+        async function rateGameStars(starsCount) {
             if (!currentRatingGame) return;
+
+            // Room reactions are shared in real time; ratings remain global/local as before.
             let key = getGameRatingsKey(currentRatingGame);
             let ratings = JSON.parse(localStorage.getItem(key)) || [4.8];
             ratings.push(starsCount);
             localStorage.setItem(key, JSON.stringify(ratings));
             loadGameReactions(currentRatingGame);
-            showCustomAlert("Rating Submitted", `Thank you for rating ${currentRatingGame} ${starsCount} stars! ⭐`);
+            showCustomAlert('Rating Submitted', `Thank you for rating ${currentRatingGame} ${starsCount} stars! ⭐`);
         }
 
         function isGameFavorited(gameName) {
@@ -2307,8 +2611,12 @@
             const iframe = document.getElementById('gameIframe');
             iframe.src = gameUrl;
 
-            loadGameChat(gameName, currentActiveRoomCode);
-            loadGameReactions(gameName);
+            if (firebaseReady && currentActiveRoomCode !== "SOLO" && !activeRoomRef) {
+                attachToActiveRoom(currentActiveRoomCode, gameName, false).catch(console.error);
+            } else {
+                loadGameChat(gameName, currentActiveRoomCode);
+                loadGameReactions(gameName);
+            }
 
             let gameObj = allGames.find(g => g.name === gameName);
             let imgPath = gameObj ? gameObj.img : 'assets/pictures/hazmob.jpeg';
@@ -2334,7 +2642,6 @@
 
         function loadUniversalProgress() {
             const grid = document.getElementById('continuePlayingGrid');
-            if(!grid) return;
             let universalProgress = JSON.parse(localStorage.getItem('hamugang_universal_progress')) || [];
 
             if (universalProgress.length === 0) {
@@ -2377,7 +2684,8 @@
             grid.innerHTML = html;
         }
 
-        function goBackToMenu() {
+        async function goBackToMenu() {
+            await leaveCurrentRoom();
             switchView('home');
         }
 
