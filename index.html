@@ -277,6 +277,7 @@
             gap: 15px;
             cursor: pointer;
             transition: 0.2s;
+            position: relative;
         }
 
         .trending-row-card:hover {
@@ -1216,11 +1217,9 @@
                             <label>Select Game</label>
                             <select id="mpGameSelect">
                                 <option value="Hazmob">Hazmob</option>
-                                <option value="Hamu Shooter">Hamu Shooter</option>
-                                <option value="Ragdoll Archers">Ragdoll Archers</option>
                                 <option value="Hamu Fighter">Hamu Fighter</option>
                                 <option value="Veck.io">Veck.io</option>
-                                <option value="Hamu Minecraft">Hamu Minecraft</option>
+                                <option value="Ragdoll Archers">Ragdoll Archers</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1357,10 +1356,10 @@
                     <div class="game-tab-pane active" id="paneChat">
                         <div style="font-size: 12px; color: var(--text-muted);" id="chatRoomStatusLabel">Live Room Chat Box</div>
                         <div class="chat-messages-container" id="gameChatBox">
-                            <div class="chat-msg-item"><span class="chat-msg-user">System:</span>Welcome to the room chat! Talk about your progress here.</div>
+                            <div class="chat-msg-item"><span class="chat-msg-user">System:</span>Welcome to the game chat! Share your tips here.</div>
                         </div>
                         <div class="chat-input-area">
-                            <input type="text" id="chatMessageInput" placeholder="Type room progress or tips..." onkeydown="if(event.key==='Enter') sendGameChatMsg()">
+                            <input type="text" id="chatMessageInput" placeholder="Type a tip or chat..." onkeydown="if(event.key==='Enter') sendGameChatMsg()">
                             <button class="btn btn-primary" style="padding: 8px 12px;" onclick="sendGameChatMsg()"><i class="fa-solid fa-paper-plane"></i></button>
                         </div>
                     </div>
@@ -1504,7 +1503,6 @@
             loadUniversalProgress();
             renderAllGameGrids();
             updateStreakUI();
-            autoCleanInactiveServers();
             renderLiveServersList();
         });
 
@@ -1618,7 +1616,6 @@
             } else if (viewName === 'multiplayer') {
                 document.getElementById('multiplayerView').classList.add('active-view');
                 document.getElementById('navMultiplayer').classList.add('active');
-                autoCleanInactiveServers();
                 renderLiveServersList();
             }
         }
@@ -1719,22 +1716,16 @@
         }
 
         function getLiveServersList() {
-            return JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
+            let servers = JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
+            if (servers.length > 5) {
+                servers = servers.slice(0, 5);
+                localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
+            }
+            return servers;
         }
 
         function saveLiveServersList(servers) {
             localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
-        }
-
-        // AUTO-CLEAN INACTIVE/OLD SERVERS (older than 30 mins or empty)
-        function autoCleanInactiveServers() {
-            let servers = getLiveServersList();
-            let now = Date.now();
-            let cleaned = servers.filter(s => {
-                // Keep servers created within the last 30 minutes
-                return (now - (s.timestamp || now)) < 30 * 60 * 1000;
-            });
-            saveLiveServersList(cleaned);
         }
 
         function clearAllInactiveRooms() {
@@ -1757,8 +1748,7 @@
                 game: game,
                 host: hostName,
                 password: password,
-                time: timeStr,
-                timestamp: Date.now()
+                time: timeStr
             };
 
             servers.unshift(newServer);
@@ -1767,7 +1757,7 @@
             document.getElementById('roomCodeText').innerText = `${game} Room: ${randomCode} ${password ? '[🔒 Locked]' : '[🌐 Public]'}`;
             document.getElementById('roomCodeResultBox').style.display = 'block';
             renderLiveServersList();
-            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) for ${game} is now live!`);
+            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) is now live!`);
         }
 
         function joinGeneratedRoomNow() {
@@ -1793,7 +1783,8 @@
             let server = servers.find(s => s.code.toUpperCase() === roomCode.toUpperCase());
 
             if (!server) {
-                showCustomAlert("Server Not Found", `❌ Room code "${roomCode}" is either inactive or doesn't exist anymore!`);
+                let gameObj = allGames[0];
+                launchGame(gameObj.name, gameObj.url, roomCode);
                 return;
             }
 
@@ -1806,14 +1797,12 @@
                 }
             }
 
-            // Find exact game from allGames mapping
-            let gameObj = allGames.find(g => g.name.toLowerCase() === server.game.toLowerCase()) || allGames[0];
+            let gameObj = allGames.find(g => g.name === server.game) || allGames[0];
             showCustomAlert("Connected!", `🚀 Successfully joined ${server.host}'s live server for ${server.game}!`);
             launchGame(gameObj.name, gameObj.url, server.code);
         }
 
         function renderLiveServersList() {
-            autoCleanInactiveServers();
             let servers = getLiveServersList();
             let tbody = document.getElementById('liveServersTableBody');
 
@@ -1842,18 +1831,17 @@
         }
 
         function getGameChatKey(gameName, roomCode) {
-            return 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase + '_' + (roomCode || 'solo').toLowerCase();
+            return 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase() + '_' + (roomCode || 'solo').toLowerCase();
         }
 
         function loadGameChat(gameName, roomCode) {
             let chatBox = document.getElementById('gameChatBox');
             let statusLabel = document.getElementById('chatRoomStatusLabel');
-            let cleanRoom = roomCode || 'SOLO';
-            statusLabel.innerText = `Live Room Chat [${cleanRoom}] (${gameName})`;
+            statusLabel.innerText = `Live Room Chat (${roomCode || 'SOLO'} Mode)`;
 
-            let key = 'hamugang_chat_' + gameName.replace(/\s+/g, '_').toLowerCase() + '_' + cleanRoom.toLowerCase();
+            let key = getGameChatKey(gameName, roomCode);
             let messages = JSON.parse(localStorage.getItem(key)) || [
-                { user: "System", text: `Welcome to room [${cleanRoom}] chat! Discuss your progress & gameplay here.` }
+                { user: "System", text: `Welcome to room [${roomCode || 'SOLO'}] chat! Type your messages below.` }
             ];
 
             let html = '';
@@ -1871,16 +1859,15 @@
 
             const currentUser = getActiveUserObj();
             const username = currentUser ? currentUser.username : "GuestPlayer";
-            let cleanRoom = currentActiveRoomCode || 'SOLO';
 
-            let key = 'hamugang_chat_' + currentRatingGame.replace(/\s+/g, '_').toLowerCase() + '_' + cleanRoom.toLowerCase();
+            let key = getGameChatKey(currentRatingGame, currentActiveRoomCode);
             let messages = JSON.parse(localStorage.getItem(key)) || [];
             messages.push({ user: username, text: text });
             if (messages.length > 50) messages.shift();
 
             localStorage.setItem(key, JSON.stringify(messages));
             input.value = '';
-            loadGameChat(currentRatingGame, cleanRoom);
+            loadGameChat(currentRatingGame, currentActiveRoomCode);
         }
 
         function switchGameSidebarTab(tabName, btnElement) {
@@ -1938,12 +1925,21 @@
             return 'hamugang_reactions_' + gameName.replace(/\s+/g, '_').toLowerCase();
         }
 
+        function getGameRatingsKey(gameName) {
+            return 'hamugang_ratings_' + gameName.replace(/\s+/g, '_').toLowerCase();
+        }
+
         function loadGameReactions(gameName) {
             let data = JSON.parse(localStorage.getItem(getGameReactionsKey(gameName))) || { fire: 12, star: 8, skull: 3, poop: 1 };
             document.getElementById('count-fire').innerText = data.fire;
             document.getElementById('count-star').innerText = data.star;
             document.getElementById('count-skull').innerText = data.skull;
             document.getElementById('count-poop').innerText = data.poop;
+
+            // Load and display actual average ratings
+            let ratings = JSON.parse(localStorage.getItem(getGameRatingsKey(gameName))) || [4.8];
+            let avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+            document.getElementById('starRatingText').innerText = `Average Rating: ${avg.toFixed(1)} / 5.0 ⭐ (${ratings.length} votes)`;
         }
 
         function sendEmojiReaction(emojiType) {
@@ -1961,6 +1957,12 @@
         }
 
         function rateGameStars(starsCount) {
+            if (!currentRatingGame) return;
+            let key = getGameRatingsKey(currentRatingGame);
+            let ratings = JSON.parse(localStorage.getItem(key)) || [4.8];
+            ratings.push(starsCount);
+            localStorage.setItem(key, JSON.stringify(ratings));
+            loadGameReactions(currentRatingGame);
             showCustomAlert("Rating Submitted", `Thank you for rating ${currentRatingGame} ${starsCount} stars! ⭐`);
         }
 
@@ -2435,7 +2437,6 @@
 
         function setRegisterMode() {
             isLoginMode = false;
-            modalTitle.id = 'Register';
             modalTitle.innerText = 'Register';
             nameField.style.display = 'flex';
             emailLabel.innerText = 'Email Address';
@@ -2459,7 +2460,7 @@
             if (event.target == document.getElementById('profileModal')) {
                 closeProfileModal();
             }
-            if (event.target == document.endTarget || event.target == document.getElementById('customAlertModal')) {
+            if (event.target == document.getElementById('customAlertModal')) {
                 closeCustomAlert();
             }
             if (event.target == document.getElementById('controlsModal')) {
