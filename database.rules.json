@@ -11,8 +11,8 @@
     },
 
     "publicUsers": {
+      ".read": "auth != null",
       "$uid": {
-        ".read": "auth != null",
         ".write": "auth != null && auth.uid === $uid"
       }
     },
@@ -20,7 +20,7 @@
     "usernames": {
       "$username": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.val() === auth.uid)"
+        ".write": "auth != null && (!data.exists() || newData.val() === auth.uid)"
       }
     },
 
@@ -32,42 +32,35 @@
     },
 
     "rooms": {
-      "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null && (
-          !data.exists() ||
-          data.child('hostUid').val() === auth.uid
-        )"
-      }
-    },
+      ".read": "auth != null",
 
-    "roomPlayers": {
       "$roomId": {
         ".read": "auth != null",
-        "$uid": {
-          ".read": "auth != null",
-          ".write": "auth != null && auth.uid === $uid"
-        }
-      }
-    },
 
-    "roomChat": {
-      "$roomId": {
-        ".read": "auth != null",
-        "$messageId": {
-          ".read": "auth != null",
-          ".write": "auth != null"
-        }
-      }
-    },
+        ".write": "auth != null && (!data.exists() ? newData.child('hostUid').val() === auth.uid : data.child('hostUid').val() === auth.uid)",
 
-    "roomReactions": {
-      "$roomId": {
-        ".read": "auth != null",
-        "$reaction": {
-          "$uid": {
+        "players": {
+          "$playerId": {
             ".read": "auth != null",
-            ".write": "auth != null && auth.uid === $uid"
+            ".write": "auth != null && $playerId === auth.uid"
+          }
+        },
+
+        "chat": {
+          "$messageId": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        },
+
+        "reactions": {
+          ".read": "auth != null",
+
+          "$reaction": {
+            "$uid": {
+              ".read": "auth != null",
+              ".write": "auth != null && $uid === auth.uid"
+            }
           }
         }
       }
@@ -76,9 +69,10 @@
     "votes": {
       "$date": {
         ".read": "auth != null",
+
         "$uid": {
           ".read": "auth != null",
-          ".write": "auth != null && auth.uid === $uid"
+          ".write": "auth != null && $uid === auth.uid"
         }
       }
     }
