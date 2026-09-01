@@ -124,6 +124,55 @@
             margin-left: 2px;
         }
 
+        .multiplayer-disabled {
+            position: relative;
+            opacity: 0.48;
+            cursor: not-allowed !important;
+            pointer-events: auto;
+        }
+
+        .multiplayer-disabled::after {
+            content: '🔒';
+            position: absolute;
+            right: 8px;
+            bottom: 5px;
+            font-size: 12px;
+            line-height: 1;
+            filter: grayscale(1);
+        }
+
+        .multiplayer-disabled i {
+            text-decoration: line-through;
+            text-decoration-thickness: 2px;
+        }
+
+        .multiplayer-disabled-btn {
+            opacity: 0.5 !important;
+            cursor: not-allowed !important;
+            pointer-events: none !important;
+        }
+
+        .multiplayer-disabled-panel {
+            position: relative;
+        }
+
+        .multiplayer-disabled-panel::after {
+            content: '🔒 Multiplayer Temporarily Disabled';
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(10, 10, 14, 0.82);
+            color: #aaa;
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+            z-index: 20;
+            border-radius: inherit;
+            pointer-events: none;
+        }
+
         .search-bar {
             flex: 0.5;
             position: relative;
@@ -1106,7 +1155,7 @@
             <a href="#" id="navExplore" title="Explore Categories" onclick="switchView('explore'); return false;"><i class="fa-solid fa-compass"></i></a>
             <a href="#" id="navFav" title="My Favorites" onclick="switchView('favorites'); return false;"><i class="fa-solid fa-heart"></i></a>
             <a href="#" id="navLeaderboard" title="Global Leaderboards" onclick="switchView('leaderboard'); return false;"><i class="fa-solid fa-trophy"></i></a>
-            <a href="#" id="navMultiplayer" title="Multiplayer Rooms" onclick="switchView('multiplayer'); return false;"><i class="fa-solid fa-users"></i></a>
+            <a href="#" id="navMultiplayer" class="multiplayer-disabled" title="Multiplayer temporarily disabled" aria-disabled="true" onclick="return false;"><i class="fa-solid fa-users"></i></a>
         </div>
     </aside>
 
@@ -1117,10 +1166,6 @@
                 <div class="site-title" onclick="switchView('home')"><span class="brand-hamu">HAMUGANG</span><span class="brand-games">games</span></div>
             </div>
             
-            <div class="search-bar">
-                <i class="fa-solid fa-search"></i>
-                <input type="text" id="searchInput" placeholder="Search games and categories..." oninput="handleSearch(this.value)">
-            </div>
 
             <div class="user-actions" id="userActionsContainer">
                 <button class="btn btn-outline" onclick="openModal('login')">Login</button>
@@ -1155,7 +1200,7 @@
                         <div style="font-size: 13px; color: var(--text-muted); line-height: 1.4;">
                             Host secure multiplayer rooms with password protection and browse live servers instantly!
                         </div>
-                        <button class="btn btn-outline" onclick="switchView('multiplayer')">Open Multiplayer Hub 🚀</button>
+                        <button class="btn btn-outline multiplayer-disabled-btn" type="button" disabled title="Multiplayer is temporarily disabled">🔒 Multiplayer Temporarily Disabled</button>
                     </div>
                 </div>
 
@@ -1205,7 +1250,7 @@
             </div>
 
             <!-- Multiplayer & Room Codes Hub -->
-            <div id="multiplayerView" class="view-section">
+            <div id="multiplayerView" class="view-section multiplayer-disabled-panel" aria-disabled="true">
                 <div class="section-title"><i class="fa-solid fa-users" style="color: var(--accent-hover);"></i> Multiplayer & Live Server Hub 🎮</div>
                 
                 <div class="multiplayer-hub-box">
@@ -1871,6 +1916,12 @@
         }
 
         function switchView(viewName) {
+            if (viewName === 'multiplayer' && window.__HAMUGANG_MULTIPLAYER_ENABLED__ === false) {
+                if (typeof showCustomAlert === 'function') {
+                    showCustomAlert('Multiplayer Disabled', 'Multiplayer is temporarily disabled while the online room system is being finished.');
+                }
+                return;
+            }
             if (currentActiveRoomCode !== 'SOLO' && viewName !== 'multiplayer') {
                 leaveCurrentRoom().catch(console.warn);
             }
@@ -3942,6 +3993,10 @@
 <script>
 (function(){
 'use strict';
+// Multiplayer is temporarily disabled while the online room system is being finished.
+// Keep this false until the feature is ready.
+const MULTIPLAYER_ENABLED = false;
+window.__HAMUGANG_MULTIPLAYER_ENABLED__ = MULTIPLAYER_ENABLED;
 if (window.__HAMUGANG_V3__) return;
 window.__HAMUGANG_V3__ = true;
 
@@ -4155,6 +4210,7 @@ async function uniqueCode(){
 }
 
 async function createRoomV3(){
+  if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}
   if(window.__hamuCreateBusy) return; window.__hamuCreateBusy=true;
   try{
     const u=await waitAuth(); if(!u || u.isAnonymous){show('Login Required','Login/register first, then create your live server.');openModal?.('login');return;}
@@ -4202,6 +4258,7 @@ function detachRoomV3(){
   activeRoomPlayersRef=null;activeRoomChatRef=null;activeRoomReactionsRef=null;activeRoomConnectionRef=null;activeRoomConnectionHandler=null;activeRoomPlayerRef=null;activeRoomRef=null;activeRoomConnected=false;activeRoomIsHost=false;
 }
 async function joinRoomInternal(code,room,isHost){
+  if(!MULTIPLAYER_ENABLED) throw new Error('MULTIPLAYER_DISABLED');
   const u=onlineUser(); if(!u) throw new Error('LOGIN_REQUIRED');
   detachRoomV3();
   const clientId=(hamuClientId||sessionStorage.getItem('hamugang_client_id')||crypto.randomUUID());
@@ -4231,6 +4288,7 @@ async function joinRoomInternal(code,room,isHost){
   updateActiveCount();
 }
 async function joinRoomV3(raw){
+  if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}
   const u=await waitAuth(); if(!u || u.isAnonymous){show('Login Required','Login/register first to join a live room.');openModal?.('login');return;}
   let code=String(raw||'').trim().toUpperCase().replace(/\s+/g,''); if(!roomCodeOk(code)){show('Invalid Room Code','Use a code like HAMU-1234.');return;}
   try{
@@ -4277,31 +4335,75 @@ async function authV3(){
   if(errEl)errEl.style.display='none'; const old=btn?.innerText;
   if(btn){btn.disabled=true;btn.innerText=isLoginMode?'Logging in…':'Creating…';}
   try{
-    if(!firebaseReady){throw new Error('Firebase is still connecting. Please wait a moment and try again.');}
+    if(!firebaseReady)throw new Error('Firebase is still connecting. Please wait a moment and try again.');
     const identifier=document.getElementById('emailInput')?.value.trim()||'',password=document.getElementById('passwordInput')?.value||'';
     if(!identifier||!password)throw new Error('Please fill in all fields.');
+
     if(isLoginMode){
       let email=identifier.toLowerCase();
-      if(!identifier.includes('@')){const s=await db('usernames/'+usernameKey(identifier)).once('value');if(!s.exists()||!s.val()?.email)throw new Error('USERNAME_NOT_FOUND');email=String(s.val().email).toLowerCase();}
+      if(!identifier.includes('@')){
+        // Username -> email lookup is intentionally public in the RTDB rules because
+        // the visitor is not authenticated yet. Only the username mapping is exposed.
+        const snap=await db('usernames/'+usernameKey(identifier)).once('value');
+        if(!snap.exists()||!snap.val()?.email)throw new Error('USERNAME_NOT_FOUND');
+        email=String(snap.val().email).toLowerCase();
+      }
       const cred=await firebase.auth().signInWithEmailAndPassword(email,password);firebaseAuthUser=cred.user;
       const p=await loadCloudProfileV3(cred.user); if(!p)throw new Error('PROFILE_MISSING');
       attachVoteListenerV3(); closeModal?.(); checkUserSession?.(); loadUniversalProgress?.(); renderAllGameGrids?.(); updateStreakUI?.();
       show('Login Successful',`Welcome back, ${p.username}! Your cloud profile and progress are loaded.`);
     }else{
       const username=document.getElementById('usernameInput')?.value.trim()||'';const email=identifier.toLowerCase();
-      if(!/^[a-zA-Z0-9_-]{3,24}$/.test(username))throw new Error('BAD_USERNAME');if(!email.includes('@'))throw new Error('BAD_EMAIL');if(password.length<6)throw new Error('WEAK_PASSWORD');
-      const key=usernameKey(username),taken=await db('usernames/'+key).once('value');if(taken.exists())throw new Error('USERNAME_TAKEN');
+      if(!/^[a-zA-Z0-9_-]{3,24}$/.test(username))throw new Error('BAD_USERNAME');
+      if(!email.includes('@'))throw new Error('BAD_EMAIL');
+      if(password.length<6)throw new Error('WEAK_PASSWORD');
+
+      const key=usernameKey(username);
       const oldLocal=(getAllUsers?.()||[]).find(x=>x.username===username||String(x.email||'').toLowerCase()===email);
+
+      // IMPORTANT: do not read /usernames before Firebase Auth exists.
+      // That was the source of permission_denied for new signed-out visitors.
       const cred=await firebase.auth().createUserWithEmailAndPassword(email,password);firebaseAuthUser=cred.user;
       const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[]});
-      try{const tx=await db('usernames/'+key).transaction(v=>v===null?{uid:cred.user.uid,email}:undefined);if(!tx.committed)throw new Error('USERNAME_TAKEN');await saveCloudProfile(p,true);}catch(e){try{await db('usernames/'+key).remove();}catch(_){ }try{await cred.user.delete();}catch(_){ }throw e;}
-      localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));localStorage.setItem('hamugang_active_user',username);
+
+      try{
+        // Claim the username only after Auth has created the account.
+        const tx=await db('usernames/'+key).transaction(v=>v===null?{uid:cred.user.uid,email}:undefined);
+        if(!tx.committed)throw new Error('USERNAME_TAKEN');
+        await saveCloudProfile(p,true);
+      }catch(e){
+        try{await db('usernames/'+key).transaction(v=>v&&v.uid===cred.user.uid?null:v);}catch(_){ }
+        try{await cred.user.delete();}catch(_){ }
+        throw e;
+      }
+
+      localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));
+      localStorage.setItem('hamugang_active_user',username);
       attachVoteListenerV3();closeModal?.();checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();show('Account Created',`Welcome ${username}! Your account is now available on every device.`);
     }
-  }catch(e){console.error('AUTH V3',e);const map={USERNAME_NOT_FOUND:'Username not found. Use your email or check the username.',PROFILE_MISSING:'Login worked but your cloud profile is missing.',USERNAME_TAKEN:'That username is already registered. Try Login.',BAD_USERNAME:'Username must be 3-24 characters using letters, numbers, _ or -.',BAD_EMAIL:'Enter a valid email address.',WEAK_PASSWORD:'Password must be at least 6 characters.'};if(errEl){errEl.innerText=map[e.message]||(e.code==='auth/email-already-in-use'?'That email is already registered. Click Login.':e.code==='auth/invalid-credential'?'Incorrect email/username or password.':e.message||'Authentication failed.');errEl.style.display='block';}}
-  finally{authBusy=false;if(btn){btn.disabled=false;btn.innerText=old|| (isLoginMode?'Login':'Register');}}
+  }catch(e){
+    console.error('AUTH V3',e);
+    const map={
+      USERNAME_NOT_FOUND:'Username not found. Use your email or check the username.',
+      PROFILE_MISSING:'Login worked but your cloud profile is missing.',
+      USERNAME_TAKEN:'That username is already registered. Try Login.',
+      BAD_USERNAME:'Username must be 3-24 characters using letters, numbers, _ or -.',
+      BAD_EMAIL:'Enter a valid email address.',
+      WEAK_PASSWORD:'Password must be at least 6 characters.'
+    };
+    if(errEl){
+      errEl.innerText=map[e.message]||
+        (e.code==='auth/email-already-in-use'?'That email is already registered. Click Login.':
+         e.code==='auth/invalid-email'?'Please enter a valid email address.':
+         e.code==='auth/weak-password'?'Password is too weak. Use at least 6 characters.':
+         e.code==='auth/operation-not-allowed'?'Email/Password sign-in is disabled in Firebase Authentication. Enable Email/Password in Firebase Console.':
+         e.code==='auth/invalid-credential'?'Incorrect email/username or password.':
+         e.code==='PERMISSION_DENIED' || /permission_denied/i.test(e.message||'')?'Firebase permission denied. Update the Realtime Database Rules shown below.':
+         e.message||'Authentication failed.');
+      errEl.style.display='block';
+    }
+  }finally{authBusy=false;if(btn){btn.disabled=false;btn.innerText=old|| (isLoginMode?'Login':'Register');}}
 }
-
 async function initV3(){
   if(window.__HAMU_V3_INITED)return; window.__HAMU_V3_INITED=true;
   try{
@@ -4339,11 +4441,11 @@ window.handleDirectVote=handleVoteV3;
 window.voteForCurrentGame=()=>handleVoteV3(currentRatingGame,null);
 window.renderLiveServersList=renderRooms;
 window.renderLiveServersListFromSnapshot=()=>renderRooms();
-window.generateRoomCode=createRoomV3;
+window.generateRoomCode=()=>{if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}return createRoomV3();};
 window.deleteHostedRoom=deleteRoomV3;
-window.joinCustomRoomCode=()=>joinRoomV3(document.getElementById('customRoomInput')?.value||'');
-window.joinGeneratedRoomNow=()=>{const m=(document.getElementById('roomCodeText')?.innerText||'').match(/HAMU-\d{4}/i);if(m)return joinRoomV3(m[0]);};
-window.attemptJoinServer=joinRoomV3;
+window.joinCustomRoomCode=()=>{if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}return joinRoomV3(document.getElementById('customRoomInput')?.value||'');};
+window.joinGeneratedRoomNow=()=>{if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}const m=(document.getElementById('roomCodeText')?.innerText||'').match(/HAMU-\d{4}/i);if(m)return joinRoomV3(m[0]);};
+window.attemptJoinServer=(raw)=>{if(!MULTIPLAYER_ENABLED){show('Multiplayer Disabled','Multiplayer is temporarily disabled while the online room system is being finished.');return;}return joinRoomV3(raw);};
 window.attachToActiveRoom=joinRoomInternal;
 window.leaveCurrentRoom=leaveRoomV3;
 window.sendGameChatMsg=sendChatV3;
