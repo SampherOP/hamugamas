@@ -4010,6 +4010,7 @@ let votesValueHandler = null;
 let voteCycle = null;
 let voteTimer = null;
 let authBusy = false;
+let registrationInProgress = false;
 
 function db(path){ return firebase.database().ref(path || ''); }
 function fu(){ return firebase.auth().currentUser || firebaseAuthUser || null; }
@@ -4353,33 +4354,48 @@ async function authV3(){
       attachVoteListenerV3(); closeModal?.(); checkUserSession?.(); loadUniversalProgress?.(); renderAllGameGrids?.(); updateStreakUI?.();
       show('Login Successful',`Welcome back, ${p.username}! Your cloud profile and progress are loaded.`);
     }else{
-      const username=document.getElementById('usernameInput')?.value.trim()||'';const email=identifier.toLowerCase();
-      if(!/^[a-zA-Z0-9_-]{3,24}$/.test(username))throw new Error('BAD_USERNAME');
-      if(!email.includes('@'))throw new Error('BAD_EMAIL');
+      const username=String(document.getElementById('usernameInput')?.value||'').trim();
+      const email=String(identifier||'').trim().toLowerCase();
+      const USERNAME_RE=/^[a-zA-Z0-9_-]{3,24}$/;
+      const EMAIL_RE=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if(!USERNAME_RE.test(username))throw new Error('BAD_USERNAME');
+      if(!EMAIL_RE.test(email))throw new Error('BAD_EMAIL');
       if(password.length<6)throw new Error('WEAK_PASSWORD');
 
       const key=usernameKey(username);
+      if(!key || /[.#$\[\]]/.test(key))throw new Error('BAD_USERNAME');
+
       const oldLocal=(getAllUsers?.()||[]).find(x=>x.username===username||String(x.email||'').toLowerCase()===email);
-
-      // IMPORTANT: do not read /usernames before Firebase Auth exists.
-      // That was the source of permission_denied for new signed-out visitors.
-      const cred=await firebase.auth().createUserWithEmailAndPassword(email,password);firebaseAuthUser=cred.user;
-      const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[]});
-
+      registrationInProgress=true;
+      let cred=null;
       try{
-        // Claim the username only after Auth has created the account.
-        const tx=await db('usernames/'+key).transaction(v=>v===null?{uid:cred.user.uid,email}:undefined);
-        if(!tx.committed)throw new Error('USERNAME_TAKEN');
-        await saveCloudProfile(p,true);
-      }catch(e){
-        try{await db('usernames/'+key).transaction(v=>v&&v.uid===cred.user.uid?null:v);}catch(_){ }
-        try{await cred.user.delete();}catch(_){ }
-        throw e;
-      }
+        cred=await firebase.auth().createUserWithEmailAndPassword(email,password);
+        firebaseAuthUser=cred.user;
+        if(!cred.user?.uid)throw new Error('AUTH_UID_MISSING');
 
-      localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));
-      localStorage.setItem('hamugang_active_user',username);
-      attachVoteListenerV3();closeModal?.();checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();show('Account Created',`Welcome ${username}! Your account is now available on every device.`);
+        const usernameRef=firebase.database().ref('usernames').child(key);
+        const claim=await usernameRef.transaction(current=>current===null?{uid:cred.user.uid,email}:undefined);
+        if(!claim.committed)throw new Error('USERNAME_TAKEN');
+
+        const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[]});
+        if(!p.username || !p.email)throw new Error('PROFILE_INVALID');
+
+        await firebase.database().ref('users').child(cred.user.uid).set(p);
+        await firebase.database().ref('publicUsers').child(cred.user.uid).set({username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements});
+
+        localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));
+        localStorage.setItem('hamugang_active_user',username);
+        attachVoteListenerV3();closeModal?.();checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();
+        show('Account Created',`Welcome ${username}! Your account is now available on every device.`);
+      }catch(e){
+        if(cred?.user?.uid){
+          try{await firebase.database().ref('usernames').child(key).transaction(v=>v&&v.uid===cred.user.uid?null:v);}catch(_){}
+          try{await firebase.database().ref('users').child(cred.user.uid).remove();}catch(_){}
+          try{await firebase.database().ref('publicUsers').child(cred.user.uid).remove();}catch(_){}
+          try{await cred.user.delete();}catch(_){}
+        }
+        throw e;
+      }finally{registrationInProgress=false;}
     }
   }catch(e){
     console.error('AUTH V3',e);
@@ -4389,7 +4405,9 @@ async function authV3(){
       USERNAME_TAKEN:'That username is already registered. Try Login.',
       BAD_USERNAME:'Username must be 3-24 characters using letters, numbers, _ or -.',
       BAD_EMAIL:'Enter a valid email address.',
-      WEAK_PASSWORD:'Password must be at least 6 characters.'
+      WEAK_PASSWORD:'Password must be at least 6 characters.',
+      AUTH_UID_MISSING:'Firebase created the account but did not return a user ID. Please try again.',
+      PROFILE_INVALID:'Your profile data is incomplete. Please check the username and email.'
     };
     if(errEl){
       errEl.innerText=map[e.message]||
@@ -4416,7 +4434,9 @@ async function initV3(){
     firebase.auth().onAuthStateChanged(async u=>{
       firebaseAuthUser=u||null;firebaseAuthReady=true;
       if(u&&!u.isAnonymous){
-        try{await loadCloudProfileV3(u);}catch(e){console.error('profile load',e);}
+        if(!registrationInProgress){
+          try{await loadCloudProfileV3(u);}catch(e){console.error('profile load',e);}
+        }
         attachVoteListenerV3();
         if(profileListener)profileListener.off();
         profileListener=db('users/'+u.uid);profileListener.on('value',s=>{const p=s.val();if(!p)return;const users=getAllUsers?.()||[];const merged=users.filter(x=>x.username!==p.username);merged.push(profileShape(p));localStorage.setItem('hamugang_all_users',JSON.stringify(merged));localStorage.setItem('hamugang_active_user',p.username);checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();});
