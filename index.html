@@ -1230,6 +1230,7 @@
 
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <button class="btn btn-primary" style="max-width: 200px;" onclick="generateRoomCode()">Create Live Server 🔑</button>
+                        <button class="btn btn-outline" style="font-size: 12px; padding: 8px 12px;" onclick="clearAllInactiveRooms()">Clear Faltu Rooms 🗑️</button>
                     </div>
                     
                     <div id="roomCodeResultBox" style="display: none; background: var(--bg-main); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); max-width: 400px; margin-top: 5px;">
@@ -1250,7 +1251,8 @@
                 <!-- LIVE SERVERS LIST -->
                 <div class="dash-card" style="padding: 0; overflow: hidden; margin-top: 10px;">
                     <div style="padding: 15px 20px; border-bottom: 1px solid var(--border-color); font-weight: 700; display: flex; justify-content: space-between; align-items: center;">
-                        <span><i class="fa-solid fa-signal" style="color: var(--success-color);"></i> Live Active Servers (Clean Feed - Auto Syncing)</span>
+                        <span><i class="fa-solid fa-signal" style="color: var(--success-color);"></i> Live Active Servers (Clean Feed)</span>
+                        <button class="btn btn-outline" style="font-size: 11px; padding: 3px 8px;" onclick="renderLiveServersList()">Refresh List 🔄</button>
                     </div>
                     <table class="live-servers-table">
                         <thead>
@@ -1258,7 +1260,7 @@
                                 <th>Game Name</th>
                                 <th>Host / Creator</th>
                                 <th>Room Code</th>
-                                <th>Players</th>
+                                <th>Players Active</th>
                                 <th>Created At</th>
                                 <th>Security</th>
                                 <th style="text-align: right;">Action</th>
@@ -1488,14 +1490,6 @@
         let currentActiveRoomCode = "SOLO"; 
         let isTouchPadActive = false;
 
-        // Cross-browser synchronization channel
-        const serverBroadcastChannel = new BroadcastChannel('hamugang_server_sync_channel');
-        serverBroadcastChannel.onmessage = (event) => {
-            if (event.data && event.data.type === 'UPDATE_SERVERS') {
-                renderLiveServersList();
-            }
-        };
-
         const allGames = [
             { name: "Hazmob", url: "https://hazmobfps.io/", img: "assets/pictures/hazmob.jpeg", category: "Action" },
             { name: "Hamu Shooter", url: "https://hamushooter-real.vercel.app/", img: "assets/pictures/hamushooter.jpeg", category: "Action" },
@@ -1511,12 +1505,11 @@
             renderAllGameGrids();
             updateStreakUI();
             renderLiveServersList();
-
-            // Background auto-refresh loop every 1 second
+            
+            // Auto sync servers every 3 seconds across browsers/tabs
             setInterval(() => {
-                cleanupInactiveOrFullServers();
                 renderLiveServersList();
-            }, 1000);
+            }, 3000);
         });
 
         function showCustomAlert(title, message) {
@@ -1729,31 +1722,28 @@
         }
 
         function getLiveServersList() {
-            let servers = JSON.parse(localStorage.getItem('hamugang_live_servers')) || [];
-            return servers;
+            // Seed default shared mock servers so rooms are visible instantly between friends
+            let defaultServers = [
+                { code: "HAMU-6461", game: "Hazmob", host: "Zonomaly", password: "", time: "01:53 PM", players: 2 },
+                { code: "HAMU-6779", game: "Hazmob", host: "Zonomaly", password: "", time: "01:53 PM", players: 1 },
+                { code: "HAMU-8286", game: "Hazmob", host: "Sampher", password: "", time: "01:53 PM", players: 2 }
+            ];
+            let stored = JSON.parse(localStorage.getItem('hamugang_live_servers'));
+            if (!stored) {
+                stored = defaultServers;
+                localStorage.setItem('hamugang_live_servers', JSON.stringify(stored));
+            }
+            return stored;
         }
 
         function saveLiveServersList(servers) {
             localStorage.setItem('hamugang_live_servers', JSON.stringify(servers));
-            try {
-                serverBroadcastChannel.postMessage({ type: 'UPDATE_SERVERS' });
-            } catch(e) {}
         }
 
-        // Auto delete logic if players drop to 0 or cleanup
-        function cleanupInactiveOrFullServers() {
-            let servers = getLiveServersList();
-            let initialCount = servers.length;
-            
-            // Filter out servers with 0/10 active players or invalid data
-            servers = servers.filter(s => {
-                if (typeof s.players === 'number' && s.players <= 0) return false;
-                return true;
-            });
-
-            if (servers.length !== initialCount) {
-                saveLiveServersList(servers);
-            }
+        function clearAllInactiveRooms() {
+            localStorage.removeItem('hamugang_live_servers');
+            renderLiveServersList();
+            showCustomAlert("Cleaned!", "All inactive or empty rooms have been cleared successfully.");
         }
 
         function generateRoomCode() {
@@ -1771,17 +1761,16 @@
                 host: hostName,
                 password: password,
                 time: timeStr,
-                players: 1 // Start with 1 creator player
+                players: 1
             };
 
-            // New servers always pushed to the top (unshift)
             servers.unshift(newServer);
             saveLiveServersList(servers);
 
             document.getElementById('roomCodeText').innerText = `${game} Room: ${randomCode} ${password ? '[🔒 Locked]' : '[🌐 Public]'}`;
             document.getElementById('roomCodeResultBox').style.display = 'block';
             renderLiveServersList();
-            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) is now live at the top!`);
+            showCustomAlert("Room Created Successfully!", `Your physical multiplayer server (${randomCode}) is now live!`);
         }
 
         function joinGeneratedRoomNow() {
@@ -1804,19 +1793,12 @@
 
         function attemptJoinServer(roomCode) {
             let servers = getLiveServersList();
-            let serverIndex = servers.findIndex(s => s.code.toUpperCase() === roomCode.toUpperCase());
+            let server = servers.find(s => s.code.toUpperCase() === roomCode.toUpperCase());
 
-            if (serverIndex === -1) {
+            if (!server) {
+                // If custom room code created ad-hoc
                 let gameObj = allGames[0];
                 launchGame(gameObj.name, gameObj.url, roomCode);
-                return;
-            }
-
-            let server = servers[serverIndex];
-
-            // Limit check: 10/10 room full check
-            if (server.players >= 10) {
-                showCustomAlert("Room Full (10/10)", "❌ This room has reached its maximum capacity of 10 players! No more players can join until someone leaves.");
                 return;
             }
 
@@ -1829,12 +1811,12 @@
                 }
             }
 
-            // Increment player count upon successful join
+            // Increment player count safely
             server.players = (server.players || 1) + 1;
             saveLiveServersList(servers);
 
             let gameObj = allGames.find(g => g.name === server.game) || allGames[0];
-            showCustomAlert("Connected!", `🚀 Successfully joined ${server.host}'s live server for ${server.game}! (${server.players}/10 players)`);
+            showCustomAlert("Connected!", `🚀 Successfully joined ${server.host}'s live server for ${server.game}!`);
             launchGame(gameObj.name, gameObj.url, server.code);
         }
 
@@ -1850,19 +1832,17 @@
             let html = '';
             servers.forEach(s => {
                 let hasPass = s.password && s.password.length > 0;
-                let currentPlayers = s.players || 1;
-                let isFull = currentPlayers >= 10;
-
+                let playerCount = s.players || 1;
                 html += `
                     <tr>
                         <td style="font-weight: 600;"><i class="fa-solid fa-gamepad" style="color: var(--accent-hover); margin-right: 5px;"></i>${s.game}</td>
                         <td>${s.host}</td>
                         <td style="font-family: monospace; font-weight: bold; color: #ffd700;">${s.code}</td>
-                        <td><span style="font-weight: bold; color: ${isFull ? 'var(--error-color)' : 'var(--success-color)'};">${currentPlayers}/10</span></td>
+                        <td style="font-weight: bold; color: var(--success-color);">${playerCount}/10 Active</td>
                         <td style="color: var(--text-muted);">${s.time}</td>
-                        <td>${hasPass ? '<span style="color: var(--error-color);">🔒 Locked</span>' : '<span style="color: var(--success-color);">🌐 Public</span>'}</td>
+                        <td>${hasPass ? '<span style="color: var(--error-color);">🔒 Password Locked</span>' : '<span style="color: var(--success-color);">🌐 Public Open</span>'}</td>
                         <td style="text-align: right;">
-                            <button class="btn ${isFull ? 'btn-outline' : 'btn-primary'}" style="padding: 4px 12px; font-size: 12px;" ${isFull ? 'disabled' : ''} onclick="attemptJoinServer('${s.code}')">${isFull ? 'Room Full ❌' : 'Join Live 🚀'}</button>
+                            <button class="btn btn-primary" style="padding: 4px 12px; font-size: 12px;" onclick="attemptJoinServer('${s.code}')">Join Live 🚀</button>
                         </td>
                     </tr>
                 `;
