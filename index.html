@@ -1843,6 +1843,7 @@
         function renderLiveServersList() {
             let servers = getLiveServersList();
             let tbody = document.getElementById('liveServersTableBody');
+            if(!tbody) return;
 
             if (servers.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 25px; color: var(--text-muted);">No active rooms right now. Create one above!</td></tr>`;
@@ -2333,6 +2334,7 @@
 
         function loadUniversalProgress() {
             const grid = document.getElementById('continuePlayingGrid');
+            if(!grid) return;
             let universalProgress = JSON.parse(localStorage.getItem('hamugang_universal_progress')) || [];
 
             if (universalProgress.length === 0) {
