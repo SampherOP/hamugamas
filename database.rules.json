@@ -19,8 +19,9 @@
 
     "usernames": {
       "$username": {
-        ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || newData.val() === auth.uid)"
+        ".read": true,
+        ".write": "auth != null && newData.child('uid').val() === auth.uid && (!data.exists() || data.child('uid').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['uid', 'email']) && newData.child('uid').isString() && newData.child('email').isString()"
       }
     },
 
