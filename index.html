@@ -1793,7 +1793,8 @@
             { name: "Veck.io", url: "https://veck.io/", img: "assets/pictures/veckio.jpeg", category: "Multiplayer" },
             { name: "Hamu Minecraft", url: "https://turbowarp.org/817609515/embed", img: "assets/pictures/pmc.jpeg", category: "Strategy" },
             { name: "krunker", url: "https://krunker.io/", img: "assets/pictures/krunker.jpeg", category: "Action" },
-            { name: "Slither", url: "https://slither.io/", img: "assets/pictures/slither.jpeg", category: "Multiplayer" }
+            { name: "Slither", url: "https://slither.io/", img: "assets/pictures/slither.jpeg", category: "Multiplayer" },
+            { name: "Slither", url: "https://quenq.com/apps/vc-web/", img: "assets/pictures/vc.jpeg", category: "Action" }
         ];
         /* ===================== END GAMES DATABASE ============================ */
 
@@ -4522,5 +4523,32 @@ document.addEventListener('keydown',e=>{
 })();
 
 </script>
+
+    <!-- HAMUGANG HILLTOP POPUNDER AD -->
+    <script>
+    (function() {
+        'use strict';
+        const HAMU_AD_URL = 'https://plump-plastic.com/bZ3kVH0.Pi3hppvnbdmOVmJdZ/DG0E3KMKz/cS2RNqzVUOzgL-T-cpz/NBzlYE3CNDTuct';
+        const COOLDOWN = 60 * 1000;
+        let lastOpen = Number(sessionStorage.getItem('hamuAdLastOpen') || 0);
+
+        function openAdOnce(event) {
+            const now = Date.now();
+            if (now - lastOpen < COOLDOWN) return;
+            if (event && event.target && event.target.closest && event.target.closest('[data-no-ad]')) return;
+            lastOpen = now;
+            sessionStorage.setItem('hamuAdLastOpen', String(now));
+            const w = window.open(HAMU_AD_URL, '_blank', 'noopener,noreferrer,width=1,height=1,left=-10000,top=-10000');
+            if (w) {
+                try { w.blur(); window.focus(); } catch (_) {}
+            }
+            document.removeEventListener('click', openAdOnce, true);
+        }
+
+        // Popunder opens only from a real user click, which is required by modern browsers.
+        document.addEventListener('click', openAdOnce, true);
+    })();
+    </script>
+
 </body>
 </html>
