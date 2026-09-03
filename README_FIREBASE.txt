@@ -44,3 +44,17 @@ AUTH / PROGRESS
 - Firebase Authentication is the identity source.
 - Profile/progress/favorites/points/streak are stored at users/{uid}.
 - The browser localStorage is only a cache.
+
+
+SOCIAL / RANKING / CHATTER
+- publicUsers/{uid} contains only public player stats: username, rank, points, playtime, games played, objectives, visits, streak, presence and optional compressed avatar. Email is not published in this new public profile payload.
+- publicChat/messages/{messageId} stores authenticated public chat messages. The UI enforces a 30-second per-account cooldown.
+- privateChats/{chatId}/members/{uid} controls private chat membership; privateChats/{chatId}/messages stores private messages.
+- chatInvites/{recipientUid}/{inviteId} stores private-chat invitations. Invite cards are shown only inside the Chatter category.
+- Profile email is read-only. Username can be changed once; after that the profile locks the username field. Password changes require current-password re-authentication through Firebase Auth.
+- Profile pictures are resized in the browser before being stored as a small data URL, keeping uploads lightweight.
+- Ranking score combines points, playtime, games played, completed objectives, visits and login streak. Ranks are unlocked by completed objectives.
+
+IMPORTANT SECURITY NOTE
+- The 30-second public-chat cooldown is enforced in the website UI and Firebase authentication/rules protect the database. A truly unbypassable server-side rate limit requires a trusted backend/Cloud Function; client-only cooldowns can be bypassed by a malicious user.
+- Never store service-account keys, private API keys, or passwords in index.html.
