@@ -5072,5 +5072,137 @@ try{attachGlobalSocialListeners()}catch(_){ }
 })();
 </script>
 
+
+<script>
+/* HAMUGANG LAST AUTH/CHAT RECOVERY PATCH
+   Fixes orphaned Firebase Auth accounts, stale username mappings and Chatter auth state.
+*/
+(function(){
+  if(window.__HAMU_LAST_RECOVERY_PATCH__) return;
+  window.__HAMU_LAST_RECOVERY_PATCH__=true;
+  const dbx = p => firebase.database().ref(p || '');
+  const ukey = n => String(n||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'_').slice(0,40);
+  const validName = /^[a-zA-Z0-9_-]{3,24}$/;
+
+  function authUser(){
+    const u = firebase?.auth?.()?.currentUser;
+    return u && !u.isAnonymous ? u : null;
+  }
+  function profileDefaults(u,name){
+    const now=Date.now();
+    return {username:name,email:u.email,progress:[],favorites:[],points:100,streak:1,lastClaimDate:null,
+      playtimeMinutes:0,achievements:[],registeredAt:Number(u.metadata?.creationTime?new Date(u.metadata.creationTime).getTime():now),
+      lastSeen:now,online:true,playing:false,currentGame:'',visits:1,gamesPlayed:0,uniqueGames:0,
+      objectives:[],objectiveCount:0,playedGamesList:[],avatar:'',usernameChangeUsed:false,rank:'Rookie',lastOnlineAt:now};
+  }
+  async function uniqueRecoveryName(base){
+    let b=String(base||'Player').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,18)||'Player';
+    for(let i=0;i<100;i++){
+      const n=i?`${b}${i}`:b, snap=await dbx('usernames/'+ukey(n)).once('value');
+      if(!snap.exists()) return n;
+    }
+    return 'Player'+Date.now().toString().slice(-7);
+  }
+  async function recoverProfile(u){
+    if(!u) return null;
+    const us=await dbx('users/'+u.uid).once('value');
+    let p=us.val();
+    if(p && p.username){
+      p={...profileDefaults(u,p.username),...p,email:u.email,lastSeen:Date.now(),online:true};
+      await dbx('users/'+u.uid).update({email:u.email,lastSeen:p.lastSeen,online:true});
+    } else {
+      // Recover old accounts whose Auth record exists but profile/username mapping was lost.
+      let mapped=null;
+      const all=await dbx('usernames').once('value');
+      all.forEach(c=>{const v=c.val()||{};if(v.uid===u.uid && !mapped)mapped=v;});
+      let name=validName.test(String(mapped?.username||'')) ? mapped.username : await uniqueRecoveryName((u.email||'').split('@')[0]);
+      p=profileDefaults(u,name);
+      const key=ukey(name);
+      const claim=await dbx('usernames/'+key).transaction(v=>v===null?{uid:u.uid,email:u.email,username:name}:undefined);
+      if(!claim.committed){name=await uniqueRecoveryName(name);p.username=name;await dbx('usernames/'+ukey(name)).set({uid:u.uid,email:u.email,username:name});}
+      await dbx('users/'+u.uid).set(p);
+    }
+    const pub={username:p.username,points:Number(p.points||0),streak:Number(p.streak||0),playtimeMinutes:Number(p.playtimeMinutes||0),
+      achievements:Array.isArray(p.achievements)?p.achievements:[],registeredAt:Number(p.registeredAt||Date.now()),lastSeen:p.lastSeen,
+      online:true,playing:!!p.playing,currentGame:String(p.currentGame||''),visits:Number(p.visits||0),gamesPlayed:Number(p.gamesPlayed||0),
+      uniqueGames:Number(p.uniqueGames||0),objectives:Array.isArray(p.objectives)?p.objectives:[],objectiveCount:Number(p.objectiveCount||0),
+      playedGamesList:Array.isArray(p.playedGamesList)?p.playedGamesList:[],avatar:String(p.avatar||''),usernameChangeUsed:!!p.usernameChangeUsed,
+      rank:String(p.rank||'Rookie'),lastOnlineAt:Number(p.lastOnlineAt||Date.now())};
+    await dbx('publicUsers/'+u.uid).update(pub);
+    localStorage.setItem('hamugang_active_user',p.username);
+    const local=typeof getAllUsers==='function'?getAllUsers():[];
+    localStorage.setItem('hamugang_all_users',JSON.stringify(local.filter(x=>x.username!==p.username && x.email!==p.email).concat(p)));
+    window.firebaseAuthUser=u;window.firebaseAuthReady=true;
+    try{checkUserSession?.()}catch(_){ }
+    return p;
+  }
+
+  async function loginFinal(){
+    const err=document.getElementById('authErrorMsg'),btn=document.getElementById('modalSubmitBtn');
+    if(err)err.style.display='none'; if(window.__HAMU_REC_AUTH_BUSY__)return; window.__HAMU_REC_AUTH_BUSY__=true;
+    try{
+      const id=String(document.getElementById('emailInput')?.value||'').trim(),pw=String(document.getElementById('passwordInput')?.value||'');
+      if(!id||!pw)throw new Error('Please fill in all fields.');
+      if(!isLoginMode){
+        const name=String(document.getElementById('usernameInput')?.value||'').trim(),email=id.toLowerCase();
+        if(!validName.test(name))throw new Error('BAD_USERNAME');
+        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new Error('BAD_EMAIL');
+        if(pw.length<6)throw new Error('WEAK_PASSWORD');
+        let cred;
+        try{cred=await firebase.auth().createUserWithEmailAndPassword(email,pw)}catch(e){
+          if(e.code==='auth/email-already-in-use') throw new Error('EMAIL_TAKEN'); throw e;
+        }
+        const u=cred.user,key=ukey(name),now=Date.now();
+        try{
+          const claim=await dbx('usernames/'+key).transaction(v=>v===null?{uid:u.uid,email,username:name}:undefined);
+          if(!claim.committed){await u.delete();throw new Error('USERNAME_TAKEN');}
+          const p=profileDefaults(u,name);
+          p.registeredAt=now;p.lastSeen=now;
+          await dbx().update({['users/'+u.uid]:p,['publicUsers/'+u.uid]:{username:name,points:100,streak:1,playtimeMinutes:0,achievements:[],registeredAt:now,lastSeen:now,online:true,playing:false,currentGame:'',visits:1,gamesPlayed:0,uniqueGames:0,objectives:[],objectiveCount:0,playedGamesList:[],avatar:'',usernameChangeUsed:false,rank:'Rookie',lastOnlineAt:now}});
+          localStorage.setItem('hamugang_active_user',name);localStorage.setItem('hamugang_all_users',JSON.stringify((typeof getAllUsers==='function'?getAllUsers():[]).filter(x=>x.username!==name&&x.email!==email).concat(p)));
+          window.firebaseAuthUser=u;window.firebaseAuthReady=true;try{window.attachGlobalSocialListeners?.()}catch(_){ }try{window.openChatterView?.()}catch(_){ }
+          closeModal?.();checkUserSession?.();showCustomAlert?.('Account Created',`Welcome ${name}! Your account is registered and ready on every device.`);return;
+        }catch(e){
+          // Keep a real Auth account recoverable if the database write was the only failure.
+          if(e.message==='USERNAME_TAKEN')throw e;
+          try{await recoverProfile(u);closeModal?.();showCustomAlert?.('Account Created',`Welcome! Your account was created. Your profile has been recovered automatically.`);return;}catch(re){console.error('registration recovery',re);throw e;}
+        }
+      }
+      let email=id.toLowerCase();
+      if(!id.includes('@')){
+        const snap=await dbx('usernames/'+ukey(id)).once('value'),m=snap.val();
+        if(!m?.email)throw new Error('USERNAME_NOT_FOUND'); email=String(m.email).toLowerCase();
+      }
+      const cred=await firebase.auth().signInWithEmailAndPassword(email,pw),p=await recoverProfile(cred.user);
+      if(!p)throw new Error('PROFILE_RECOVERY_FAILED');
+      try{window.attachGlobalSocialListeners?.()}catch(_){ }try{window.refreshAllPlayers?.()}catch(_){ }
+      closeModal?.();checkUserSession?.();showCustomAlert?.('Login Successful',`Welcome back, ${p.username}! Your account is synced online.`);
+    }catch(e){
+      console.error('[HAMU RECOVERY AUTH]',e);
+      const msg={USERNAME_NOT_FOUND:'Username not found. Check the spelling or log in with the registered email.',USERNAME_TAKEN:'That username is already registered. Please choose another username or use Login.',EMAIL_TAKEN:'This email is already registered. Please switch to Login and use this email with your password.',BAD_USERNAME:'Username must be 3–24 characters using letters, numbers, _ or -.',BAD_EMAIL:'Enter a valid email address.',WEAK_PASSWORD:'Password must be at least 6 characters.',PROFILE_RECOVERY_FAILED:'Login succeeded but the profile could not be recovered. Please try again.'};
+      const text=msg[e.message]||(e.code==='auth/invalid-credential'?'Incorrect email/username or password.':e.code==='auth/user-not-found'?'No Firebase account exists for this email.':e.code==='auth/wrong-password'?'Incorrect password.':e.code==='auth/operation-not-allowed'?'Email/Password Authentication is disabled in Firebase. Enable it in Firebase Console.':e.code==='auth/network-request-failed'?'Network error. Check your internet connection.':e.code==='PERMISSION_DENIED'||/permission_denied/i.test(e.message||'')?'Firebase Database Rules rejected the request. Publish the supplied rules.':e.message||'Authentication failed.');
+      if(err){err.textContent=text;err.style.display='block';}
+    }finally{window.__HAMU_REC_AUTH_BUSY__=false;if(btn){btn.disabled=false;btn.textContent=isLoginMode?'Login':'Register';}}
+  }
+
+  async function chatFinal(){
+    const u=authUser(),input=document.getElementById('socialChatInput'),text=String(input?.value||'').trim();
+    if(!u){showCustomAlert?.('Login Required','Please log in to your HAMUGANG account before chatting.');openModal?.('login');return;}
+    if(!text)return;if(text.length>300)return showCustomAlert?.('Message Too Long','Keep messages under 300 characters.');
+    const key='hamu_public_chat_last_'+u.uid,localLast=Number(localStorage.getItem(key)||0),now=Date.now();
+    if(now-localLast<30000){showCustomAlert?.('Chat Cooldown',`Please wait ${Math.ceil((30000-(now-localLast))/1000)} seconds before sending another public message.`);return;}
+    try{
+      const p=await recoverProfile(u);
+      const msgRef=dbx('publicChat').push();
+      await msgRef.set({uid:u.uid,user:p?.username||u.email.split('@')[0],text:text.slice(0,300),timestamp:firebase.database.ServerValue.TIMESTAMP});
+      localStorage.setItem(key,String(now));if(input){input.value='';input.focus();}
+    }catch(e){console.error('[HAMU RECOVERY CHAT]',e);showCustomAlert?.('Chat Error',e?.message||'Message could not be sent. Check Firebase Rules.');}
+  }
+  window.handleAuthSubmit=loginFinal;
+  window.sendSocialChat=chatFinal;
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{const f=document.getElementById('forgotPasswordLink');if(f&&!f.dataset.final){f.dataset.final='1';f.onclick=window.hamuForgotPassword||null;}}, {once:true});
+})();
+</script>
+
 </body>
 </html>
