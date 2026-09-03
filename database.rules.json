@@ -1,0 +1,68 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "publicUsers": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "usernames": {
+      "$username": {
+        ".read": true,
+        ".write": "auth != null && (!newData.exists() ? data.child('uid').val() === auth.uid : (!data.exists() ? newData.child('uid').val() === auth.uid : data.child('uid').val() === auth.uid && newData.child('uid').val() === auth.uid))",
+        ".validate": "!newData.exists() || (newData.hasChildren(['uid','email']) && newData.child('uid').isString() && newData.child('email').isString())"
+      }
+    },
+    "hostRooms": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "rooms": {
+      ".read": "auth != null",
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() ? newData.child('hostUid').val() === auth.uid : data.child('hostUid').val() === auth.uid)",
+        "players": {
+          "$playerId": {
+            ".read": "auth != null",
+            ".write": "auth != null && $playerId === auth.uid"
+          }
+        },
+        "chat": {
+          "$messageId": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        },
+        "reactions": {
+          ".read": "auth != null",
+          "$reaction": {
+            "$uid": {
+              ".read": "auth != null",
+              ".write": "auth != null && $uid === auth.uid"
+            }
+          }
+        }
+      }
+    },
+    "votes": {
+      "$date": {
+        ".read": "auth != null",
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null && $uid === auth.uid"
+        }
+      }
+    }
+  }
+}

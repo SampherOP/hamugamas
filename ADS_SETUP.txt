@@ -1,0 +1,8 @@
+HAMUGANGgames ad setup
+
+The supplied direct ad URL is integrated into index.html as a click-triggered popunder.
+It uses a 60-second session cooldown and requires a real user click because modern browsers block unsolicited popups.
+
+The supplied 87 KB anti-block script was NOT executed/integrated because it contains anti-blocking/evasion behavior and external script loading.
+
+If your ad provider gives you a standard publisher script, you can replace the direct URL integration with that official script.
