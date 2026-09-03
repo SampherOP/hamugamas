@@ -77,6 +77,32 @@
             color: var(--text-main);
         }
 
+        /* --- ALL PLAYERS --- */
+        .players-dashboard { display:flex; flex-direction:column; gap:18px; }
+        .players-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+        .players-stat-card { background:linear-gradient(135deg,#202027,#18181c); border:1px solid var(--border-color); border-radius:14px; padding:18px; }
+        .players-stat-label { color:var(--text-muted); font-size:12px; margin-bottom:7px; }
+        .players-stat-value { font-size:25px; font-weight:800; }
+        .players-stat-icon { float:right; font-size:19px; color:var(--accent-hover); }
+        .players-toolbar { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+        .players-search { flex:1; min-width:220px; max-width:420px; background:var(--bg-card); color:var(--text-main); border:1px solid var(--border-color); border-radius:9px; padding:10px 12px; outline:none; }
+        .players-search:focus { border-color:var(--accent-hover); }
+        .players-table-wrap { background:var(--bg-card); border:1px solid var(--border-color); border-radius:14px; overflow:auto; }
+        .players-table { width:100%; border-collapse:collapse; min-width:930px; }
+        .players-table th { padding:13px 15px; text-align:left; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--border-color); background:#1b1b20; }
+        .players-table td { padding:14px 15px; border-bottom:1px solid rgba(255,255,255,.055); font-size:13px; }
+        .players-table tr:last-child td { border-bottom:0; }
+        .player-name-cell { display:flex; align-items:center; gap:10px; font-weight:700; }
+        .player-avatar { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; background:linear-gradient(135deg,#7928ca,#ff0080); color:#fff; font-weight:800; }
+        .player-status { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border-radius:999px; font-size:11px; font-weight:700; }
+        .player-status.online { color:#55efc4; background:rgba(46,213,115,.12); }
+        .player-status.playing { color:#ffd86b; background:rgba(255,215,0,.11); }
+        .player-status.offline { color:#a5a5ad; background:rgba(255,255,255,.06); }
+        .status-dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+        .players-empty { padding:38px 20px; text-align:center; color:var(--text-muted); }
+        @media (max-width: 900px) { .players-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+        @media (max-width: 520px) { .players-stat-grid { grid-template-columns:1fr; } }
+
         /* --- MAIN CONTAINER --- */
         .main-container {
             margin-left: 70px;
@@ -1142,22 +1168,6 @@
             line-height: 1.5;
         }
     </style>
-<style id="hamu-security-css">
-/* HAMUGANG SECURITY DETERRENTS
-   Client-side anti-copy controls are deterrents only; real protection is server-side. */
-html.hamu-secure, html.hamu-secure body {
-  -webkit-user-select: none !important;
-  user-select: none !important;
-}
-html.hamu-secure input, html.hamu-secure textarea, html.hamu-secure [contenteditable="true"] {
-  -webkit-user-select: text !important;
-  user-select: text !important;
-}
-html.hamu-secure img, html.hamu-secure video {
-  -webkit-user-drag: none !important;
-  user-drag: none !important;
-}
-</style>
 </head>
 <body>
 
@@ -1171,6 +1181,7 @@ html.hamu-secure img, html.hamu-secure video {
             <a href="#" id="navExplore" title="Explore Categories" onclick="switchView('explore'); return false;"><i class="fa-solid fa-compass"></i></a>
             <a href="#" id="navFav" title="My Favorites" onclick="switchView('favorites'); return false;"><i class="fa-solid fa-heart"></i></a>
             <a href="#" id="navLeaderboard" title="Global Leaderboards" onclick="switchView('leaderboard'); return false;"><i class="fa-solid fa-trophy"></i></a>
+            <a href="#" id="navAllPlayers" title="All Players" onclick="switchView('allplayers'); return false;"><i class="fa-solid fa-user-group"></i></a>
             <a href="#" id="navMultiplayer" class="multiplayer-disabled" title="Multiplayer temporarily disabled" aria-disabled="true" onclick="return false;"><i class="fa-solid fa-users"></i></a>
         </div>
     </aside>
@@ -1261,6 +1272,33 @@ html.hamu-secure img, html.hamu-secure video {
                             <tr><td colspan="4" style="text-align: center; padding: 30px; color: var(--text-muted);">Loading leaderboards...</td></tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- ALL PLAYERS / LIVE PLAYER DIRECTORY -->
+            <div id="allplayersView" class="view-section">
+                <div class="section-title"><i class="fa-solid fa-user-group" style="color: var(--accent-hover);"></i> All Players 👥</div>
+                <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">Registered players, online/playing status, points, playtime, visits, account age and last seen.</div>
+                <div class="players-dashboard">
+                    <div class="players-stat-grid">
+                        <div class="players-stat-card"><i class="fa-solid fa-users players-stat-icon"></i><div class="players-stat-label">TOTAL PLAYERS</div><div class="players-stat-value" id="playersTotalCount">0</div></div>
+                        <div class="players-stat-card"><i class="fa-solid fa-signal players-stat-icon"></i><div class="players-stat-label">ONLINE NOW</div><div class="players-stat-value" id="playersOnlineCount">0</div></div>
+                        <div class="players-stat-card"><i class="fa-solid fa-gamepad players-stat-icon"></i><div class="players-stat-label">PLAYING NOW</div><div class="players-stat-value" id="playersPlayingCount">0</div></div>
+                        <div class="players-stat-card"><i class="fa-solid fa-user-clock players-stat-icon"></i><div class="players-stat-label">CURRENTLY GONE</div><div class="players-stat-value" id="playersGoneCount">0</div></div>
+                    </div>
+                    <div class="dash-card" style="padding:15px 18px;">
+                        <div class="players-toolbar">
+                            <div style="font-weight:700;"><i class="fa-solid fa-chart-simple" style="color:var(--accent-hover);"></i> Player Activity</div>
+                            <input id="playersSearchInput" class="players-search" type="search" placeholder="Search player name..." oninput="window.filterAllPlayers?.(this.value)">
+                            <button class="btn btn-outline" type="button" onclick="window.refreshAllPlayers?.()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+                        </div>
+                    </div>
+                    <div class="players-table-wrap">
+                        <table class="players-table">
+                            <thead><tr><th>Player</th><th>Status</th><th>Points</th><th>Playtime</th><th>Visits</th><th>Since</th><th>Last Seen</th></tr></thead>
+                            <tbody id="allPlayersBody"><tr><td colspan="7" class="players-empty">Loading players...</td></tr></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
@@ -1964,6 +2002,7 @@ html.hamu-secure img, html.hamu-secure video {
             if (currentActiveRoomCode !== 'SOLO' && viewName !== 'multiplayer') {
                 leaveCurrentRoom().catch(console.warn);
             }
+            try{const u=onlineUser?.();if(u)db('publicUsers/'+u.uid).update({playing:false,currentGame:'',lastSeen:firebase.database.ServerValue.TIMESTAMP});}catch(_){}
             document.getElementById('gamePlayView').style.display = 'none';
             document.getElementById('gameIframe').src = "";
             document.getElementById('touchControlsOverlay').classList.remove('active');
@@ -1998,6 +2037,16 @@ html.hamu-secure img, html.hamu-secure video {
                 document.getElementById('leaderboardView').classList.add('active-view');
                 document.getElementById('navLeaderboard').classList.add('active');
                 renderGlobalLeaderboard();
+            } else if (viewName === 'allplayers') {
+                const currentUser = getActiveUserObj();
+                if (!currentUser) {
+                    showCustomAlert('Authentication Required', 'Please login first to view all players.');
+                    openModal('login');
+                    return;
+                }
+                document.getElementById('allplayersView').classList.add('active-view');
+                document.getElementById('navAllPlayers').classList.add('active');
+                window.renderAllPlayers?.();
             } else if (viewName === 'multiplayer') {
                 document.getElementById('multiplayerView').classList.add('active-view');
                 document.getElementById('navMultiplayer').classList.add('active');
@@ -4079,7 +4128,9 @@ function profileShape(p){
     username:String(p?.username||'').slice(0,40), email:String(p?.email||'').slice(0,160),
     progress:Array.isArray(p?.progress)?p.progress.slice(0,50):[], favorites:Array.isArray(p?.favorites)?p.favorites.slice(0,100):[],
     points:Number(p?.points)||0, streak:Number(p?.streak)||0, lastClaimDate:p?.lastClaimDate||null,
-    playtimeMinutes:Number(p?.playtimeMinutes)||0, achievements:Array.isArray(p?.achievements)?p.achievements.slice(0,50):[]
+    playtimeMinutes:Number(p?.playtimeMinutes)||0, achievements:Array.isArray(p?.achievements)?p.achievements.slice(0,50):[],
+    registeredAt:Number(p?.registeredAt)||0, lastSeen:Number(p?.lastSeen)||0, online:!!p?.online, playing:!!p?.playing,
+    currentGame:String(p?.currentGame||'').slice(0,80), visits:Number(p?.visits)||0
   };
 }
 async function saveCloudProfile(profile, immediate=true){
@@ -4087,7 +4138,7 @@ async function saveCloudProfile(profile, immediate=true){
   const p=profileShape(profile), key=usernameKey(p.username), root=db();
   const updates={};
   updates['users/'+u.uid]=p;
-  updates['publicUsers/'+u.uid]={username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements};
+  updates['publicUsers/'+u.uid]={username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements,registeredAt:p.registeredAt,lastSeen:p.lastSeen,online:p.online,playing:p.playing,currentGame:p.currentGame,visits:p.visits};
   if(key) updates['usernames/'+key]={uid:u.uid,email:p.email};
   try { await root.update(updates); }
   catch(e){ console.error('Cloud profile write failed',e); if(immediate) throw e; }
@@ -4096,12 +4147,18 @@ async function loadCloudProfileV3(u){
   if(!u || u.isAnonymous || !firebaseReady) return null;
   const snap=await db('users/'+u.uid).once('value');
   let p=snap.val();
+  const authCreated=Number(u.metadata?.creationTime?new Date(u.metadata.creationTime).getTime():0);
   if(!p){
     const email=(u.email||'').toLowerCase();
     const local=(getAllUsers?.()||[]).find(x=>String(x.email||'').toLowerCase()===email);
-    p=profileShape(local||{username:(email.split('@')[0]||'Player').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,24)||'Player',email,progress:[],favorites:[],points:100,streak:0,playtimeMinutes:0,achievements:[]});
+    p=profileShape(local||{username:(email.split('@')[0]||'Player').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,24)||'Player',email,progress:[],favorites:[],points:100,streak:0,playtimeMinutes:0,achievements:[],registeredAt:authCreated||Date.now(),lastSeen:Date.now(),online:true,playing:false,currentGame:'',visits:0});
     await saveCloudProfile(p,true);
-  } else p=profileShape(p);
+  } else {
+    p=profileShape(p);
+    if(!p.registeredAt) p.registeredAt=authCreated||Date.now();
+    p.lastSeen=Date.now(); p.online=true;
+    await db('users/'+u.uid).update({registeredAt:p.registeredAt,lastSeen:p.lastSeen,online:true});
+  }
   const users=getAllUsers?getAllUsers():[];
   const merged=users.filter(x=>x.username!==p.username && String(x.email||'').toLowerCase()!==String(p.email||'').toLowerCase());
   merged.push(p);
@@ -4416,11 +4473,11 @@ async function authV3(){
         const claim=await usernameRef.transaction(current=>current===null?{uid:cred.user.uid,email}:undefined);
         if(!claim.committed)throw new Error('USERNAME_TAKEN');
 
-        const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[]});
+        const p=profileShape({username,email,progress:oldLocal?.progress||[],favorites:oldLocal?.favorites||[],points:oldLocal?.points??100,streak:oldLocal?.streak??0,lastClaimDate:oldLocal?.lastClaimDate||null,playtimeMinutes:oldLocal?.playtimeMinutes??0,achievements:oldLocal?.achievements||[],registeredAt:Date.now(),lastSeen:Date.now(),online:true,playing:false,currentGame:'',visits:1});
         if(!p.username || !p.email)throw new Error('PROFILE_INVALID');
 
         await firebase.database().ref('users').child(cred.user.uid).set(p);
-        await firebase.database().ref('publicUsers').child(cred.user.uid).set({username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements});
+        await firebase.database().ref('publicUsers').child(cred.user.uid).set({username:p.username,points:p.points,streak:p.streak,playtimeMinutes:p.playtimeMinutes,achievements:p.achievements,registeredAt:p.registeredAt,lastSeen:p.lastSeen,online:true,playing:false,currentGame:'',visits:1});
 
         localStorage.setItem('hamugang_all_users',JSON.stringify((getAllUsers?.()||[]).filter(x=>x.username!==username&&String(x.email||'').toLowerCase()!==email).concat(p)));
         localStorage.setItem('hamugang_active_user',username);
@@ -4477,6 +4534,8 @@ async function initV3(){
           try{await loadCloudProfileV3(u);}catch(e){console.error('profile load',e);}
         }
         attachVoteListenerV3();
+        attachAllPlayersListener();
+        startPlayerPresence();
         if(profileListener)profileListener.off();
         profileListener=db('users/'+u.uid);profileListener.on('value',s=>{const p=s.val();if(!p)return;const users=getAllUsers?.()||[];const merged=users.filter(x=>x.username!==p.username);merged.push(profileShape(p));localStorage.setItem('hamugang_all_users',JSON.stringify(merged));localStorage.setItem('hamugang_active_user',p.username);checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();});
       }else{clearVoteListener();window.__hamuVoteMap={};if(profileListener){profileListener.off();profileListener=null;}localStorage.removeItem('hamugang_active_user');}
@@ -4487,6 +4546,34 @@ async function initV3(){
     renderRooms();
   }catch(e){console.error('V3 init failed',e);firebaseReady=false;show('Firebase Error',e?.message||'Could not initialize Firebase.');}
 }
+
+// ================================================================
+// ALL PLAYERS + REAL-TIME PRESENCE / PLAYTIME
+// Only non-sensitive public stats are shown in this directory.
+// ================================================================
+let allPlayersCache=[];
+let allPlayersListener=null;
+let playerPresenceUid=null;
+let playerPresenceInterval=null;
+let playerLastTickAt=0;
+let playerVisitCounted=false;
+function playerDate(ts,fallback='—'){const n=Number(ts||0);if(!n)return fallback;try{return new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Karachi',day:'2-digit',month:'short',year:'numeric'}).format(new Date(n));}catch(_){return new Date(n).toLocaleDateString();}}
+function playerDateTime(ts,fallback='Never'){const n=Number(ts||0);if(!n)return fallback;try{return new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Karachi',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(n));}catch(_){return new Date(n).toLocaleString();}}
+function playerDuration(mins){const m=Math.max(0,Math.floor(Number(mins)||0)),h=Math.floor(m/60),r=m%60;return h?`${h}h ${r}m`:`${r}m`;}
+function playerInitial(name){return String(name||'?').trim().charAt(0).toUpperCase()||'?';}
+function playerStatusHtml(p){if(p.playing)return `<span class="player-status playing"><span class="status-dot"></span>Playing${p.currentGame?` · ${esc(p.currentGame)}`:''}</span>`;if(p.online)return `<span class="player-status online"><span class="status-dot"></span>Online</span>`;return `<span class="player-status offline"><span class="status-dot"></span>Offline</span>`;}
+function renderAllPlayers(filter=''){
+ const body=document.getElementById('allPlayersBody');if(!body)return;const q=String(filter||document.getElementById('playersSearchInput')?.value||'').trim().toLowerCase();
+ const rows=allPlayersCache.filter(p=>String(p.username||'').toLowerCase().includes(q)).sort((a,b)=>Number(b.playing)-Number(a.playing)||Number(b.online)-Number(a.online)||Number(b.points||0)-Number(a.points||0));
+ const total=allPlayersCache.length,online=allPlayersCache.filter(p=>p.online).length,playing=allPlayersCache.filter(p=>p.playing).length;
+ document.getElementById('playersTotalCount').textContent=total;document.getElementById('playersOnlineCount').textContent=online;document.getElementById('playersPlayingCount').textContent=playing;document.getElementById('playersGoneCount').textContent=Math.max(0,total-online);
+ if(!rows.length){body.innerHTML=`<tr><td colspan="7" class="players-empty">${total?'No player matches your search.':'No registered players yet.'}</td></tr>`;return;}
+ body.innerHTML=rows.map(p=>`<tr><td><div class="player-name-cell"><span class="player-avatar">${esc(playerInitial(p.username))}</span><span>${esc(p.username||'Player')}</span></div></td><td>${playerStatusHtml(p)}</td><td style="font-weight:700;color:#ffd700;">${Number(p.points||0).toLocaleString()} pts</td><td>${esc(playerDuration(p.playtimeMinutes))}</td><td>${Number(p.visits||0).toLocaleString()}</td><td>${esc(playerDate(p.registeredAt))}</td><td>${esc(p.online?'Now':playerDateTime(p.lastSeen))}</td></tr>`).join('');
+}
+window.renderAllPlayers=()=>renderAllPlayers();window.filterAllPlayers=v=>renderAllPlayers(v);window.refreshAllPlayers=()=>{if(allPlayersListener)allPlayersListener.once('value').catch(console.warn);};
+function attachAllPlayersListener(){if(!firebaseReady||!onlineUser())return;if(allPlayersListener)allPlayersListener.off();allPlayersListener=db('publicUsers');allPlayersListener.on('value',snap=>{const list=[];snap.forEach(ch=>{const x=ch.val()||{};if(x.username)list.push({uid:ch.key,...x});});allPlayersCache=list;renderAllPlayers();});}
+async function updateOwnPresence(){const u=onlineUser();if(!u||!firebaseReady)return;const ref=db('publicUsers/'+u.uid),now=Date.now(),current=getActiveUserObj()||{};const inGame=!!document.getElementById('gamePlayView')&&document.getElementById('gamePlayView').style.display!=='none';const gameTitle=String(document.getElementById('playingTitle')?.innerText||'').replace(/^Playing:\s*/,'').replace(/\s*\[Room:.*\]$/,'').trim();try{const snap=await ref.once('value'),old=snap.val()||{};const registeredAt=Number(old.registeredAt||current.registeredAt||u.metadata?.creationTime&&new Date(u.metadata.creationTime).getTime()||now);const updates={username:String(current.username||old.username||u.email?.split('@')[0]||'Player').slice(0,40),points:Number(current.points??old.points??0)||0,streak:Number(current.streak??old.streak??0)||0,playtimeMinutes:Number(old.playtimeMinutes??current.playtimeMinutes??0)||0,achievements:Array.isArray(current.achievements)?current.achievements.slice(0,50):(old.achievements||[]),registeredAt,lastSeen:now,online:true,playing:inGame,currentGame:inGame?gameTitle:'',visits:Number(old.visits??current.visits??0)||0};if(!playerVisitCounted){updates.visits++;playerVisitCounted=true;}await ref.update(updates);await ref.onDisconnect().update({online:false,playing:false,currentGame:'',lastSeen:firebase.database.ServerValue.TIMESTAMP});}catch(e){console.warn('presence update failed',e);}}
+function startPlayerPresence(){const u=onlineUser();if(!u)return;if(playerPresenceUid===u.uid&&playerPresenceInterval)return;playerPresenceUid=u.uid;playerLastTickAt=Date.now();playerVisitCounted=false;updateOwnPresence();clearInterval(playerPresenceInterval);playerPresenceInterval=setInterval(async()=>{const user=onlineUser();if(!user){clearInterval(playerPresenceInterval);playerPresenceInterval=null;return;}const now=Date.now();if(document.visibilityState==='visible'){const elapsed=Math.max(0,Math.floor((now-playerLastTickAt)/60000));if(elapsed>0){try{await db('publicUsers/'+user.uid).update({playtimeMinutes:firebase.database.ServerValue.increment(elapsed),lastSeen:firebase.database.ServerValue.TIMESTAMP});}catch(_){}playerLastTickAt=now;}}else playerLastTickAt=now;await updateOwnPresence();},60000);document.addEventListener('visibilitychange',()=>{playerLastTickAt=Date.now();updateOwnPresence();},{passive:true});}
 
 // Exports / overrides used by the existing single-file UI.
 window.saveAllUsers=overrideSaveAllUsers;
@@ -4512,6 +4599,7 @@ window.sendEmojiReaction=sendReactionV3;
 window.handleAuthSubmit=authV3;
 window.launchGame=async function(gameName,gameUrl,roomCode){
   currentRatingGame=gameName;currentActiveRoomCode=roomCode||'SOLO';
+  try{const u=onlineUser();if(u)await db('publicUsers/'+u.uid).update({online:true,playing:true,currentGame:String(gameName||'').slice(0,80),lastSeen:firebase.database.ServerValue.TIMESTAMP});}catch(e){console.warn('playing presence',e);}
   document.querySelectorAll('.view-section').forEach(e=>e.classList.remove('active-view'));
   const gv=document.getElementById('gamePlayView');if(gv)gv.style.display='flex';
   const title=document.getElementById('playingTitle');if(title)title.innerText=`Playing: ${gameName} [Room: ${currentActiveRoomCode}]`;
@@ -4566,53 +4654,5 @@ document.addEventListener('keydown',e=>{
     })();
     </script>
 
-<script id="hamu-security-layer">
-/* HAMUGANG SECURITY LAYER — browser-side deterrence.
-   This does NOT replace server/Firebase security rules. */
-(function () {
-  'use strict';
-  document.documentElement.classList.add('hamu-secure');
-
-  const editable = el => {
-    if (!el) return false;
-    const tag = (el.tagName || '').toUpperCase();
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
-           el.isContentEditable || !!el.closest?.('[contenteditable="true"]');
-  };
-
-  document.addEventListener('contextmenu', function (e) {
-    if (!editable(e.target)) e.preventDefault();
-  }, true);
-
-  document.addEventListener('dragstart', function (e) {
-    if (e.target && (e.target.tagName === 'IMG' || e.target.tagName === 'VIDEO')) e.preventDefault();
-  }, true);
-
-  document.addEventListener('copy', function (e) {
-    if (!editable(document.activeElement)) e.preventDefault();
-  }, true);
-
-  document.addEventListener('cut', function (e) {
-    if (!editable(document.activeElement)) e.preventDefault();
-  }, true);
-
-  document.addEventListener('keydown', function (e) {
-    const key = String(e.key || '').toLowerCase();
-    const blocked = (e.ctrlKey || e.metaKey) && ['u','s','c','x','a','p'].includes(key);
-    const devtools = e.key === 'F12' ||
-      ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i','j','c'].includes(key));
-    if (!editable(e.target) && (blocked || devtools)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }
-  }, true);
-
-  // Prevent simple image-save attempts through pointer gestures.
-  document.addEventListener('mousedown', function (e) {
-    if (e.button === 2 && !editable(e.target)) e.preventDefault();
-  }, true);
-})();
-</script>
 </body>
 </html>
