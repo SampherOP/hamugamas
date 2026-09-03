@@ -2005,14 +2005,16 @@
         }
 
         function checkUserSession() {
-            const currentUser = getActiveUserObj();
+            const firebaseUser = (window.firebase && firebase.auth) ? firebase.auth().currentUser : firebaseAuthUser;
+            const currentUser = (firebaseUser && !firebaseUser.isAnonymous) ? getActiveUserObj() : null;
             const actionsContainer = document.getElementById('userActionsContainer');
+            if (!actionsContainer) return;
 
             if (currentUser) {
                 actionsContainer.innerHTML = `
                     <div class="user-profile-badge" onclick="openProfileModal()">
                         ${currentUser.avatar ? `<img src="${escapeHTML(currentUser.avatar)}" class="player-avatar-img" alt="">` : `<i class="fa-solid fa-user-circle" style="color: var(--accent-hover); font-size: 18px;"></i>`}
-                        <span>${currentUser.username} (${currentUser.points || 0} pts)</span>
+                        <span>${escapeHTML(currentUser.username)} (${Number(currentUser.points || 0).toLocaleString()} pts)</span>
                     </div>
                     <button class="btn btn-outline" onclick="logoutUser()">Logout</button>
                 `;
@@ -4109,7 +4111,14 @@ let registrationInProgress = false;
 
 function db(path){ return firebase.database().ref(path || ''); }
 function fu(){ return firebase.auth().currentUser || firebaseAuthUser || null; }
-function onlineUser(){ const u=(window.firebase&&firebase.auth&&firebase.auth().currentUser)||firebaseAuthUser||null; return (u && u.uid && !u.isAnonymous && u.providerData?.some(p=>p?.providerId==='password')) ? u : null; }
+function onlineUser(){
+  // Firebase Auth is the ONLY source of truth for an online account.
+  // Do not require providerData to contain 'password': Firebase can temporarily
+  // populate providerData later during auth restoration, and that used to make
+  // a genuinely signed-in user appear logged out to Chatter/leaderboards.
+  const u=(window.firebase&&firebase.auth&&firebase.auth().currentUser)||firebaseAuthUser||null;
+  return (u && u.uid && !u.isAnonymous) ? u : null;
+}
 function userName(){ const u=getActiveUserObj?.(); return u?.username || onlineUser()?.email?.split('@')[0] || 'Player'; }
 function roomCodeOk(c){ return /^HAMU-\d{4}$/.test(String(c||'').trim().toUpperCase()); }
 function esc(v){ return window.escapeHTML ? window.escapeHTML(v) : String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c])); }
@@ -4520,6 +4529,10 @@ async function authV3(){
          e.code==='auth/invalid-email'?'Please enter a valid email address.':
          e.code==='auth/weak-password'?'Password is too weak. Use at least 6 characters.':
          e.code==='auth/operation-not-allowed'?'Email/Password sign-in is disabled in Firebase Authentication. Enable Email/Password in Firebase Console.':
+         e.code==='auth/email-already-in-use'?'This email is already registered. Use Login instead.':
+         e.code==='auth/user-disabled'?'This account has been disabled.':
+         e.code==='auth/too-many-requests'?'Too many attempts. Wait a little and try again.':
+         e.code==='auth/network-request-failed'?'Network error. Check your internet connection and try again.':
          e.code==='auth/invalid-credential'?'Incorrect email/username or password.':
          e.code==='PERMISSION_DENIED' || /permission_denied/i.test(e.message||'')?'Firebase permission denied. Update the Realtime Database Rules shown below.':
          e.message||'Authentication failed.');
@@ -4548,8 +4561,20 @@ async function initV3(){
         startPlayerPresence();
         if(profileListener)profileListener.off();
         profileListener=db('users/'+u.uid);profileListener.on('value',s=>{const p=s.val();if(!p)return;const users=getAllUsers?.()||[];const merged=users.filter(x=>x.username!==p.username);merged.push(profileShape(p));localStorage.setItem('hamugang_all_users',JSON.stringify(merged));localStorage.setItem('hamugang_active_user',p.username);checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();});
-      }else{clearVoteListener();window.__hamuVoteMap={};if(profileListener){profileListener.off();profileListener=null;}localStorage.removeItem('hamugang_active_user');}
+      }else{
+        clearVoteListener();window.__hamuVoteMap={};
+        if(profileListener){profileListener.off();profileListener=null;}
+        if(allPlayersListener){try{allPlayersListener.off();}catch(_){} allPlayersListener=null;}
+        if(typeof detachSocialChat==='function')try{detachSocialChat();}catch(_){ }
+        if(typeof rankRef!=='undefined' && rankRef)try{rankRef.off();}catch(_){ }
+        localStorage.removeItem('hamugang_active_user');
+        try{if(typeof checkUserSession==='function')checkUserSession();}catch(_){ }
+      }
       startRoomDirectory();checkUserSession?.();loadUniversalProgress?.();renderAllGameGrids?.();updateStreakUI?.();renderRooms();
+      if(u&&!u.isAnonymous){
+        try{window.attachGlobalSocialListeners?.();}catch(_){ }
+        try{if(document.getElementById('chatterView')?.classList.contains('active-view')) window.openChatterView?.();}catch(_){ }
+      }
     });
     // Never auto-create an anonymous account. Username lookup is read-only and the
     // online/social features require the real email/password Firebase account.
@@ -4701,15 +4726,18 @@ async function ensureSocialAuth(showLogin=true){
  if(!firebaseReady)return null;
  let u=onlineUser();
  if(u)return u;
- // Wait for Firebase LOCAL persistence to finish restoring a real account.
- const deadline=Date.now()+9000;
+ // Wait for Firebase LOCAL persistence/auth restoration. Never treat an anonymous
+ // state as a reason to stop waiting because the real account may be restored next.
+ const deadline=Date.now()+12000;
  while(Date.now()<deadline){
    u=onlineUser(); if(u)return u;
-   if(firebaseAuthReady && firebase.auth?.().currentUser?.isAnonymous)break;
    await new Promise(r=>setTimeout(r,100));
  }
  u=onlineUser();
- if(!u && showLogin){showCustomAlert('Login Required','Your website session is not connected to your Firebase account. Please log in again to use Chatter and live player features.');openModal?.('login');}
+ if(!u && showLogin){
+   showCustomAlert('Login Required','Please log in to your HAMUGANG account first. Chatter, player rankings and private chats require a real Firebase account.');
+   openModal?.('login');
+ }
  return u;
 }
 async function syncPublicUser(patch={}){const u=await ensureSocialAuth(false);if(!u)return;const ref=db('publicUsers/'+u.uid);const snap=await ref.once('value');const cur=normalizeStats(snap.val()||{});const profile=normalizeStats({...currentProfile(),...cur,...patch});const objectives=[];OBJECTIVES_V4.forEach(o=>{const v={gamesPlayed:profile.gamesPlayed,uniqueGames:profile.uniqueGames,playtimeMinutes:profile.playtimeMinutes,points:profile.points,visits:profile.visits,streak:profile.streak,favorites:(profile.favorites||[]).length}[o.metric]||0;if(Number(v)>=o.target)objectives.push(o.id)});profile.objectives=[...new Set([...(profile.objectives||[]),...objectives])];profile.objectiveCount=profile.objectives.length;const ri=rankInfo(profile);await ref.update({username:profile.username,points:profile.points,streak:profile.streak,playtimeMinutes:profile.playtimeMinutes,achievements:profile.achievements||[],registeredAt:profile.registeredAt,lastSeen:Date.now(),online:profile.online!==false,playing:!!profile.playing,currentGame:profile.currentGame||'',visits:profile.visits||0,gamesPlayed:profile.gamesPlayed,uniqueGames:profile.uniqueGames,objectives:profile.objectives,objectiveCount:profile.objectiveCount,avatar:profile.avatar||'',usernameChangeUsed:!!profile.usernameChangeUsed,rank:ri.name,lastOnlineAt:profile.lastOnlineAt||Date.now()});
@@ -4759,6 +4787,12 @@ function openProfileEditor(){const p=currentProfile();if(!p)return openModal('lo
 function closeProfileEditor(){document.getElementById('profileEditorModal').style.display='none'}
 function attachGlobalSocialListeners(){attachRankListener();if(onlineUser?.())attachChatInvites()}
 window.attachGlobalSocialListeners=attachGlobalSocialListeners;window.__hamuRefreshObjectives=()=>syncPublicUser({});window.__hamuRankCache=()=>rankCache;window.__hamuNormalizeStats=normalizeStats;window.__hamuRankingScore=rankingScore;window.__hamuRankInfo=rankInfo;window.__hamuPAvatar=pAvatar;window.__hamuStatusHtml=playerStatusHtml;window.__hamuPlayerDuration=playerDuration;window.__hamuPlayerDate=playerDate;window.__hamuPlayerDateTime=playerDateTime;window.renderGlobalRankings=renderGlobalRankings;window.filterGlobalRankings=v=>renderGlobalRankings(v);window.refreshGlobalRankings=()=>rankRef?.once('value').catch(console.warn);window.openChatterView=openChatterView;window.sendSocialChat=sendSocialChat;window.createPrivateChat=createPrivateChat;window.deletePrivateAndGoPublic=deletePrivateAndGoPublic;window.inviteToPrivateChat=inviteToPrivateChat;window.acceptChatInvite=acceptChatInvite;window.declineChatInvite=declineChatInvite;window.openChatInvites=openChatInvites;window.handleProfileAvatar=handleProfileAvatar;window.saveProfileEditor=saveProfileEditor;window.openProfileEditor=openProfileEditor;window.closeProfileEditor=closeProfileEditor;
+window.__hamuFirebaseStatus=async function(){
+  const a=(window.firebase&&firebase.auth)?firebase.auth().currentUser:null;
+  const dbState=(()=>{try{return firebase.database().ref('.info/connected').once('value').then(s=>!!s.val()).catch(()=>false)}catch(_){return Promise.resolve(false)}})();
+  const connected=await dbState;
+  return {firebaseReady,authReady:firebaseAuthReady,uid:a?.uid||null,isAnonymous:!!a?.isAnonymous,providerIds:(a?.providerData||[]).map(x=>x.providerId),databaseConnected:connected};
+};
 window.openProfileModal=function(){openProfileEditor()};
 try{attachGlobalSocialListeners()}catch(_){ }
 })();
